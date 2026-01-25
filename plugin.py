@@ -164,9 +164,21 @@ class BasePlugin:
             self.log(f"Motion: {motion_on}")
 
         if 7 in Devices:
-            brightness = int(info.get("screenBrightness", 0))
+            # Haal de waarde op uit de API info
+            brightness_val = info.get("screenBrightness", 0)
+            
+            # LOGREGEL: Deze verschijnt in je Domoticz Log
+#            Domoticz.Log(f"Fully Kiosk - Uitgelezen Brightness waarde: {brightness_val}")
+
+            try:
+                brightness = int(brightness_val)
+            except (ValueError, TypeError):
+                brightness = 0
+
+            # Update het device: 
+            # nValue=2 (Set Level), sValue=waarde als string
             Devices[7].Update(
-                nValue=1,
+                nValue=2 if brightness > 0 else 0, 
                 sValue=str(brightness)
             )
 
