@@ -1,8 +1,8 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.5">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0">
     <description>
         <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.5</p>
+        <p>Version 1.0</p>
         <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness</p>
     </description>
     <params>
