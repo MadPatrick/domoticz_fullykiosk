@@ -1,9 +1,9 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.2" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.3" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <br/>
         <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.0.2</p>
+        <p>Version 1.0.3</p>
         <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness</p>
         <table border="1" cellpadding="4" cellspacing="0">
             <tr>
@@ -57,6 +57,17 @@ import Domoticz
 import requests
 import time
 
+# ---------------------------
+# Unit constants
+# ---------------------------
+UNIT_SCREEN = 1
+UNIT_SCREENSAVER = 2
+UNIT_BATTERY = 3
+UNIT_CHARGING = 4
+UNIT_MOTION = 5
+UNIT_LOADURL = 6
+UNIT_BRIGHTNESS = 7
+
 class BasePlugin:
     def __init__(self):
         self.base_url = ""
@@ -67,20 +78,25 @@ class BasePlugin:
         self.debug = False
         self.heartbeat_interval = 10  # korte heartbeat
         self.last_full_refresh = 0
-        self.full_refresh_interval = 300  # wordt overschreven door Mode1
+        self.full_refresh_interval = 300  # standaard, wordt overschreven door Mode1
 
+    # ---------------------------
+    # Logging
+    # ---------------------------
     def log(self, message):
-        """Log alleen als debug aanstaat"""
         if self.debug:
             Domoticz.Log(f"DEBUG: {message}")
 
+    # ---------------------------
+    # Plugin start
+    # ---------------------------
     def onStart(self):
         Domoticz.Log("Fully Kiosk plugin started")
 
+        # Icon setup
         _IMAGE = "Fully"
         creating_new_icon = _IMAGE not in Images
         Domoticz.Image(f"{_IMAGE}.zip").Create()
-
         if _IMAGE in Images:
             self.imageID = Images[_IMAGE].ID
             if creating_new_icon:
@@ -90,41 +106,61 @@ class BasePlugin:
         else:
             Domoticz.Log(f"Unable to load icon pack '{_IMAGE}.zip'")
 
+        # Parameters
         self.base_url = Parameters["Address"]
         self.port = int(Parameters.get("Port", 2323))
         self.username = Parameters.get("Username", "")
         self.password = Parameters.get("Password", "")
         self.debug = Parameters.get("Mode6", "false").lower() == "true"
 
-        # Lees refresh interval uit Mode1
+        # Refresh interval uit Mode1
         try:
             self.full_refresh_interval = max(1, int(Parameters.get("Mode1", 300)))
         except Exception:
             self.full_refresh_interval = 300
-        Domoticz.Log(f"Polling interval ingesteld op {self.full_refresh_interval} seconden (Mode1)")
+        Domoticz.Log(f"Polling interval set to {self.full_refresh_interval} seconds (Mode1)")
 
         # Korte heartbeat instellen
         Domoticz.Heartbeat(self.heartbeat_interval)
-        Domoticz.Log(f"Heartbeat interval ingesteld op {self.heartbeat_interval} seconden")
+        Domoticz.Log(f"Heartbeat interval set to {self.heartbeat_interval} seconds")
 
-        # Devices aanmaken (ongewijzigd)
+        # Devices aanmaken
         if not self.devices_created:
-            if 1 not in Devices:
-                Domoticz.Device(Name="Screen", Unit=1, TypeName="Switch",Used=1,Image=self.imageID).Create()
-            if 2 not in Devices:
-                Domoticz.Device(Name="Screensaver", Unit=2, TypeName="Switch",Used=1,Image=self.imageID).Create()
-            if 3 not in Devices:
-                Domoticz.Device(Name="Battery", Unit=3, Type=243, Subtype=6,Used=1,Image=self.imageID).Create()
-            if 4 not in Devices:
-                Domoticz.Device(Name="Charging", Unit=4, TypeName="Switch",Used=1,Image=self.imageID).Create()
-            if 5 not in Devices:
-                Domoticz.Device(Name="Motion Sensor", Unit=5, TypeName="Switch",Used=1,Image=self.imageID).Create()
-            if 6 not in Devices:
-                Domoticz.Device(Name="Load Start URL", Unit=6, Type=244,Switchtype=9, Subtype=73, Used=1,Image=self.imageID).Create()
-            if 7 not in Devices:
-                Domoticz.Device(Name="Brightness", Unit=7, TypeName="Dimmer",Used=1,Image=self.imageID).Create()
+            created_devices = []
+
+            if UNIT_SCREEN not in Devices:
+                Domoticz.Device(Name="Screen", Unit=UNIT_SCREEN, TypeName="Switch",Used=1,Image=self.imageID).Create()
+                created_devices.append("Screen")
+            if UNIT_SCREENSAVER not in Devices:
+                Domoticz.Device(Name="Screensaver", Unit=UNIT_SCREENSAVER, TypeName="Switch",Used=1,Image=self.imageID).Create()
+                created_devices.append("Screensaver")
+            if UNIT_BATTERY not in Devices:
+                Domoticz.Device(Name="Battery", Unit=UNIT_BATTERY, Type=243, Subtype=6,Used=1,Image=self.imageID).Create()
+                created_devices.append("Battery")
+            if UNIT_CHARGING not in Devices:
+                Domoticz.Device(Name="Charging", Unit=UNIT_CHARGING, TypeName="Switch",Used=1,Image=self.imageID).Create()
+                created_devices.append("Charging")
+            if UNIT_MOTION not in Devices:
+                Domoticz.Device(Name="Motion Sensor", Unit=UNIT_MOTION, TypeName="Switch",Used=1,Image=self.imageID).Create()
+                created_devices.append("Motion Sensor")
+            if UNIT_LOADURL not in Devices:
+                Domoticz.Device(Name="Load Start URL", Unit=UNIT_LOADURL, Type=244,Switchtype=9, Subtype=73, Used=1,Image=self.imageID).Create()
+                created_devices.append("Load Start URL")
+            if UNIT_BRIGHTNESS not in Devices:
+                Domoticz.Device(Name="Brightness", Unit=UNIT_BRIGHTNESS, TypeName="Dimmer",Used=1,Image=self.imageID).Create()
+                created_devices.append("Brightness")
+
             self.devices_created = True
 
+            # Log de exacte devices die zijn aangemaakt
+            if created_devices:
+                Domoticz.Log(f"Fully Kiosk plugin: Devices created: {', '.join(created_devices)}")
+            else:
+                Domoticz.Log("Fully Kiosk plugin: All devices already exists.")
+
+    # ---------------------------
+    # API Call
+    # ---------------------------
     def api_call(self, cmd, extra_params=None):
         params = {"cmd": cmd, "password": self.password}
         if self.username:
@@ -147,32 +183,38 @@ class BasePlugin:
             Domoticz.Log(f"API call error: {e}")
             return None
 
+    # ---------------------------
+    # Commands
+    # ---------------------------
     def onCommand(self, Unit, Command, Level, Color):
-        if Unit == 1:  # Screen On/Off
+        if Unit == UNIT_SCREEN:
             cmd = "screenOn" if Command == "On" else "screenOff"
             self.api_call(cmd)
             self.log(f"Screen command sent: {cmd}")
-        elif Unit == 2:  # Screensaver On/Off
+        elif Unit == UNIT_SCREENSAVER:
             value = "true" if Command == "On" else "false"
             self.api_call("setConfig", {"key":"screensaver","value":value})
             self.log(f"Screensaver command sent: {value}")
-        elif Unit == 5:  # Motion Sensor
+        elif Unit == UNIT_MOTION:
             value = "true" if Command == "On" else "false"
             self.api_call("setConfig", {"key":"motionDetectionEnabled","value":value})
             self.log(f"Motion sensor command sent: {value}")
-        elif Unit == 6:  # Load Start URL
+        elif Unit == UNIT_LOADURL:
             start_url = self.api_call("getDeviceInfo", {"type":"json"}).get("startUrl", "")
             if start_url:
                 self.api_call("loadUrl", {"url": start_url})
                 Domoticz.Log(f"Load Start URL command sent: {start_url}")
-        elif Unit == 7 and Command == "Set Level":  # Brightness dimmer
+        elif Unit == UNIT_BRIGHTNESS and Command == "Set Level":
             level = int(Level)
             self.api_call("setScreenBrightness", {"value": str(level)})
-            Devices[7].Update(nValue=level, sValue=str(level))
+            if UNIT_BRIGHTNESS in Devices:
+                Devices[UNIT_BRIGHTNESS].Update(nValue=level, sValue=str(level))
             self.log(f"Set brightness to: {level}")
 
+    # ---------------------------
+    # Heartbeat (korte interval, full refresh via timer)
+    # ---------------------------
     def onHeartbeat(self):
-        """Korte heartbeat die elke 5 minuten de volledige API refresh doet"""
         now = time.time()
         if now - self.last_full_refresh < self.full_refresh_interval:
             return  # nog niet tijd voor volledige refresh
@@ -181,58 +223,53 @@ class BasePlugin:
         try:
             info = self.api_call("getDeviceInfo", {"type":"json"})
             if not info:
-                self.log("Geen data van Fully Kiosk ontvangen.")
+                self.log("No data from Fully Kiosk received.")
                 return
 
             # Screen
-            if 1 in Devices:
+            if UNIT_SCREEN in Devices:
                 screen_on = info.get("screenOn", False)
-                Devices[1].Update(nValue=1 if screen_on else 0, sValue="On" if screen_on else "Off")
+                Devices[UNIT_SCREEN].Update(nValue=1 if screen_on else 0, sValue="On" if screen_on else "Off")
                 self.log(f"Screen: {screen_on}")
 
             # Screensaver
-            if 2 in Devices:
+            if UNIT_SCREENSAVER in Devices:
                 screensaver_on = info.get("screensaverEnabled", False)
-                Devices[2].Update(nValue=1 if screensaver_on else 0, sValue="On" if screensaver_on else "Off")
+                Devices[UNIT_SCREENSAVER].Update(nValue=1 if screensaver_on else 0, sValue="On" if screensaver_on else "Off")
                 self.log(f"Screensaver: {screensaver_on}")
 
             # Battery
-            if 3 in Devices:
-                try:
-                    battery_level = int(info.get("batteryLevel", 0))
-                except (ValueError, TypeError):
-                    battery_level = 0
+            if UNIT_BATTERY in Devices:
+                battery_level = int(info.get("batteryLevel", 0))
                 battery_level = max(0, min(100, battery_level))
-                Devices[3].Update(nValue=battery_level, sValue=str(battery_level))
+                Devices[UNIT_BATTERY].Update(nValue=battery_level, sValue=str(battery_level))
                 self.log(f"Battery: {battery_level}%")
 
             # Charging
-            if 4 in Devices:
+            if UNIT_CHARGING in Devices:
                 charging = info.get("isPlugged", False)
-                Devices[4].Update(nValue=1 if charging else 0, sValue="On" if charging else "Off")
+                Devices[UNIT_CHARGING].Update(nValue=1 if charging else 0, sValue="On" if charging else "Off")
                 self.log(f"Charging: {charging}")
 
             # Motion
-            if 5 in Devices:
+            if UNIT_MOTION in Devices:
                 motion_on = info.get("motionDetectorStarted", False)
-                Devices[5].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
+                Devices[UNIT_MOTION].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
                 self.log(f"Motion: {motion_on}")
 
             # Brightness
-            if 7 in Devices:
-                try:
-                    brightness_val = info.get("screenBrightness", 0)
-                    brightness = int(brightness_val)
-                except (ValueError, TypeError):
-                    brightness = 0
+            if UNIT_BRIGHTNESS in Devices:
+                brightness = int(info.get("screenBrightness", 0))
                 brightness = max(0, min(100, brightness))
-                Devices[7].Update(nValue=2 if brightness > 0 else 0, sValue=str(brightness))
+                Devices[UNIT_BRIGHTNESS].Update(nValue=2 if brightness > 0 else 0, sValue=str(brightness))
                 self.log(f"Brightness: {brightness}")
 
         except Exception as e:
             Domoticz.Log(f"Heartbeat error: {e}")
 
+# ---------------------------
 # Globale plugin instantie
+# ---------------------------
 global _plugin
 _plugin = BasePlugin()
 
