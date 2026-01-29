@@ -1,19 +1,40 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.1">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.2" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
+        <br/>
         <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.0.1</p>
+        <p>Version 1.0.2</p>
         <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness</p>
-        ----------------------------------------------------------------------------------
-        <br/>
-        <b style="padding-right:91px;">Address</b>: Fill in the IP address<br/>
-        <b style="padding-right:115px;">Port</b>: Fill in the port address<br/>
-        <b style="padding-right:76px;">Username </b>: Fill in the Username (normally blank)<br/>
-        <b style="padding-right:80px;">Password </b>: Fill in the Password software<br/>
-        <b style="padding-right:10px;">Refresh Interval (sec) </b>: Time for the next refresh<br/>
-        <b style="padding-right:73px;">Debug Log </b>: do you want Debug loggig On or Off<br/>
-        ----------------------------------------------------------------------------------
-        <br/>
+        <table border="1" cellpadding="4" cellspacing="0">
+            <tr>
+                <th>Parameter</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td>Address</td>
+                <td>Fill in the IP address</td>
+            </tr>
+            <tr>
+                <td>Port</td>
+                <td>Fill in the port address</td>
+            </tr>
+            <tr>
+                <td>Username</td>
+                <td>Fill in the Username (normally blank)</td>
+            </tr>
+            <tr>
+                <td>Password</td>
+                <td>Fill in the Password software</td>
+            </tr>
+            <tr>
+                <td>Refresh Interval (sec)</td>
+                <td>Time for the next refresh</td>
+            </tr>
+            <tr>
+                <td>Debug Log</td>
+                <td>Do you want Debug logging On or Off</td>
+            </tr>
+        </table>
         <br/>
     </description>
     <params>
@@ -34,6 +55,7 @@
 
 import Domoticz
 import requests
+import time
 
 class BasePlugin:
     def __init__(self):
@@ -42,8 +64,10 @@ class BasePlugin:
         self.username = ""
         self.password = ""
         self.devices_created = False
-        self.refresh_interval = 60
         self.debug = False
+        self.heartbeat_interval = 10  # korte heartbeat
+        self.last_full_refresh = 0
+        self.full_refresh_interval = 300  # wordt overschreven door Mode1
 
     def log(self, message):
         """Log alleen als debug aanstaat"""
@@ -64,7 +88,7 @@ class BasePlugin:
             else:
                 self.log(f"Icons found in database (ImageID={self.imageID}).")
         else:
-            self.error(f"Unable to load icon pack '{_IMAGE}.zip'")
+            Domoticz.Log(f"Unable to load icon pack '{_IMAGE}.zip'")
 
         self.base_url = Parameters["Address"]
         self.port = int(Parameters.get("Port", 2323))
@@ -72,15 +96,18 @@ class BasePlugin:
         self.password = Parameters.get("Password", "")
         self.debug = Parameters.get("Mode6", "false").lower() == "true"
 
-        # Polling interval instellen
+        # Lees refresh interval uit Mode1
         try:
-            self.refresh_interval = max(1, int(Parameters["Mode1"]))
+            self.full_refresh_interval = max(1, int(Parameters.get("Mode1", 300)))
         except Exception:
-            self.refresh_interval = 60
-        Domoticz.Heartbeat(self.refresh_interval)
-        Domoticz.Log(f"Polling interval ingesteld op {self.refresh_interval} seconden")
+            self.full_refresh_interval = 300
+        Domoticz.Log(f"Polling interval ingesteld op {self.full_refresh_interval} seconden (Mode1)")
 
-        # Devices aanmaken
+        # Korte heartbeat instellen
+        Domoticz.Heartbeat(self.heartbeat_interval)
+        Domoticz.Log(f"Heartbeat interval ingesteld op {self.heartbeat_interval} seconden")
+
+        # Devices aanmaken (ongewijzigd)
         if not self.devices_created:
             if 1 not in Devices:
                 Domoticz.Device(Name="Screen", Unit=1, TypeName="Switch",Used=1,Image=self.imageID).Create()
@@ -93,7 +120,7 @@ class BasePlugin:
             if 5 not in Devices:
                 Domoticz.Device(Name="Motion Sensor", Unit=5, TypeName="Switch",Used=1,Image=self.imageID).Create()
             if 6 not in Devices:
-                Domoticz.Device(Name="Load Start URL", Unit=6, Type=244,Switchtype = 9, Subtype = 73, Used=1,Image=self.imageID).Create()
+                Domoticz.Device(Name="Load Start URL", Unit=6, Type=244,Switchtype=9, Subtype=73, Used=1,Image=self.imageID).Create()
             if 7 not in Devices:
                 Domoticz.Device(Name="Brightness", Unit=7, TypeName="Dimmer",Used=1,Image=self.imageID).Create()
             self.devices_created = True
@@ -145,53 +172,65 @@ class BasePlugin:
             self.log(f"Set brightness to: {level}")
 
     def onHeartbeat(self):
-        info = self.api_call("getDeviceInfo", {"type":"json"})
-        if not info:
-            return
+        """Korte heartbeat die elke 5 minuten de volledige API refresh doet"""
+        now = time.time()
+        if now - self.last_full_refresh < self.full_refresh_interval:
+            return  # nog niet tijd voor volledige refresh
+        self.last_full_refresh = now
 
-        if 1 in Devices:
-            screen_on = info.get("screenOn", False)
-            Devices[1].Update(nValue=1 if screen_on else 0, sValue="On" if screen_on else "Off")
-            self.log(f"Screen: {screen_on}")
+        try:
+            info = self.api_call("getDeviceInfo", {"type":"json"})
+            if not info:
+                self.log("Geen data van Fully Kiosk ontvangen.")
+                return
 
-        if 2 in Devices:
-            screensaver_on = info.get("screensaverEnabled", False)
-            Devices[2].Update(nValue=1 if screensaver_on else 0, sValue="On" if screensaver_on else "Off")
-            self.log(f"Screensaver: {screensaver_on}")
+            # Screen
+            if 1 in Devices:
+                screen_on = info.get("screenOn", False)
+                Devices[1].Update(nValue=1 if screen_on else 0, sValue="On" if screen_on else "Off")
+                self.log(f"Screen: {screen_on}")
 
-        if 3 in Devices:
-            battery_level = int(info.get("batteryLevel", 0))
-            Devices[3].Update(nValue=battery_level, sValue=str(battery_level))
-            self.log(f"Battery: {battery_level}%")
+            # Screensaver
+            if 2 in Devices:
+                screensaver_on = info.get("screensaverEnabled", False)
+                Devices[2].Update(nValue=1 if screensaver_on else 0, sValue="On" if screensaver_on else "Off")
+                self.log(f"Screensaver: {screensaver_on}")
 
-        if 4 in Devices:
-            charging = info.get("isPlugged", False)
-            Devices[4].Update(nValue=1 if charging else 0, sValue="On" if charging else "Off")
-            self.log(f"Charging: {charging}")
+            # Battery
+            if 3 in Devices:
+                try:
+                    battery_level = int(info.get("batteryLevel", 0))
+                except (ValueError, TypeError):
+                    battery_level = 0
+                battery_level = max(0, min(100, battery_level))
+                Devices[3].Update(nValue=battery_level, sValue=str(battery_level))
+                self.log(f"Battery: {battery_level}%")
 
-        if 5 in Devices:
-            motion_on = info.get("motionDetectorStarted", False)
-            Devices[5].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
-            self.log(f"Motion: {motion_on}")
+            # Charging
+            if 4 in Devices:
+                charging = info.get("isPlugged", False)
+                Devices[4].Update(nValue=1 if charging else 0, sValue="On" if charging else "Off")
+                self.log(f"Charging: {charging}")
 
-        if 7 in Devices:
-            # Haal de waarde op uit de API info
-            brightness_val = info.get("screenBrightness", 0)
-            
-            # LOGREGEL: Deze verschijnt in je Domoticz Log
-#            Domoticz.Log(f"Fully Kiosk - Uitgelezen Brightness waarde: {brightness_val}")
+            # Motion
+            if 5 in Devices:
+                motion_on = info.get("motionDetectorStarted", False)
+                Devices[5].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
+                self.log(f"Motion: {motion_on}")
 
-            try:
-                brightness = int(brightness_val)
-            except (ValueError, TypeError):
-                brightness = 0
+            # Brightness
+            if 7 in Devices:
+                try:
+                    brightness_val = info.get("screenBrightness", 0)
+                    brightness = int(brightness_val)
+                except (ValueError, TypeError):
+                    brightness = 0
+                brightness = max(0, min(100, brightness))
+                Devices[7].Update(nValue=2 if brightness > 0 else 0, sValue=str(brightness))
+                self.log(f"Brightness: {brightness}")
 
-            # Update het device: 
-            # nValue=2 (Set Level), sValue=waarde als string
-            Devices[7].Update(
-                nValue=2 if brightness > 0 else 0, 
-                sValue=str(brightness)
-            )
+        except Exception as e:
+            Domoticz.Log(f"Heartbeat error: {e}")
 
 # Globale plugin instantie
 global _plugin
