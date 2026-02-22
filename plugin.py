@@ -1,9 +1,9 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.3" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.4" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <br/>
         <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.0.3</p>
+        <p>Version 1.0.4</p>
         <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness</p>
         <table border="1" cellpadding="4" cellspacing="0">
             <tr>
@@ -76,9 +76,10 @@ class BasePlugin:
         self.password = ""
         self.devices_created = False
         self.debug = False
-        self.heartbeat_interval = 10  # korte heartbeat
+        self.heartbeat_interval = 10
         self.last_full_refresh = 0
-        self.full_refresh_interval = 300  # standaard, wordt overschreven door Mode1
+        self.full_refresh_interval = 300
+        self.connected = None  # None = onbekend, True = verbonden, False = fout
 
     # ---------------------------
     # Logging
@@ -113,14 +114,14 @@ class BasePlugin:
         self.password = Parameters.get("Password", "")
         self.debug = Parameters.get("Mode6", "false").lower() == "true"
 
-        # Refresh interval uit Mode1
+        # Refresh interval
         try:
             self.full_refresh_interval = max(1, int(Parameters.get("Mode1", 300)))
         except Exception:
             self.full_refresh_interval = 300
-        Domoticz.Log(f"Polling interval set to {self.full_refresh_interval} seconds (Mode1)")
+        Domoticz.Log(f"Polling interval set to {self.full_refresh_interval} seconds")
 
-        # Korte heartbeat instellen
+        # Korte heartbeat
         Domoticz.Heartbeat(self.heartbeat_interval)
         Domoticz.Log(f"Heartbeat interval set to {self.heartbeat_interval} seconds")
 
@@ -129,34 +130,33 @@ class BasePlugin:
             created_devices = []
 
             if UNIT_SCREEN not in Devices:
-                Domoticz.Device(Name="Screen", Unit=UNIT_SCREEN, TypeName="Switch",Used=1,Image=self.imageID).Create()
+                Domoticz.Device(Name="Screen", Unit=UNIT_SCREEN, TypeName="Switch", Used=1, Image=self.imageID).Create()
                 created_devices.append("Screen")
             if UNIT_SCREENSAVER not in Devices:
-                Domoticz.Device(Name="Screensaver", Unit=UNIT_SCREENSAVER, TypeName="Switch",Used=1,Image=self.imageID).Create()
+                Domoticz.Device(Name="Screensaver", Unit=UNIT_SCREENSAVER, TypeName="Switch", Used=1, Image=self.imageID).Create()
                 created_devices.append("Screensaver")
             if UNIT_BATTERY not in Devices:
-                Domoticz.Device(Name="Battery", Unit=UNIT_BATTERY, Type=243, Subtype=6,Used=1,Image=self.imageID).Create()
+                Domoticz.Device(Name="Battery", Unit=UNIT_BATTERY, Type=243, Subtype=6, Used=1, Image=self.imageID).Create()
                 created_devices.append("Battery")
             if UNIT_CHARGING not in Devices:
-                Domoticz.Device(Name="Charging", Unit=UNIT_CHARGING, TypeName="Switch",Used=1,Image=self.imageID).Create()
+                Domoticz.Device(Name="Charging", Unit=UNIT_CHARGING, TypeName="Switch", Used=1, Image=self.imageID).Create()
                 created_devices.append("Charging")
             if UNIT_MOTION not in Devices:
-                Domoticz.Device(Name="Motion Sensor", Unit=UNIT_MOTION, TypeName="Switch",Used=1,Image=self.imageID).Create()
+                Domoticz.Device(Name="Motion Sensor", Unit=UNIT_MOTION, TypeName="Switch", Used=1, Image=self.imageID).Create()
                 created_devices.append("Motion Sensor")
             if UNIT_LOADURL not in Devices:
-                Domoticz.Device(Name="Load Start URL", Unit=UNIT_LOADURL, Type=244,Switchtype=9, Subtype=73, Used=1,Image=self.imageID).Create()
+                Domoticz.Device(Name="Load Start URL", Unit=UNIT_LOADURL, Type=244, Switchtype=9, Subtype=73, Used=1, Image=self.imageID).Create()
                 created_devices.append("Load Start URL")
             if UNIT_BRIGHTNESS not in Devices:
-                Domoticz.Device(Name="Brightness", Unit=UNIT_BRIGHTNESS, TypeName="Dimmer",Used=1,Image=self.imageID).Create()
+                Domoticz.Device(Name="Brightness", Unit=UNIT_BRIGHTNESS, TypeName="Dimmer", Used=1, Image=self.imageID).Create()
                 created_devices.append("Brightness")
 
             self.devices_created = True
 
-            # Log de exacte devices die zijn aangemaakt
             if created_devices:
-                Domoticz.Log(f"Fully Kiosk plugin: Devices created: {', '.join(created_devices)}")
-            else:
-                Domoticz.Log("Fully Kiosk plugin: All devices already exists.")
+                Domoticz.Log(f"Devices created: {', '.join(created_devices)}")
+#            else:
+#                Domoticz.Log("All devices already exist.")
 
     # ---------------------------
     # API Call
@@ -172,6 +172,12 @@ class BasePlugin:
             self.log(f"API call: {url} params={params}")
             r = requests.get(url, params=params, timeout=5)
             r.raise_for_status()
+
+            # Verbinding is gelukt
+            if self.connected is False:
+                Domoticz.Log("Connection restored")
+            self.connected = True
+
             try:
                 data = r.json()
                 self.log(f"API response: {data}")
@@ -180,7 +186,20 @@ class BasePlugin:
                 self.log(f"API returned non-JSON: {r.text}")
                 return None
         except Exception as e:
-            Domoticz.Log(f"API call error: {e}")
+            msg = str(e)
+            if "No route to host" in msg:
+                short = "No route to host"
+            elif "Connection refused" in msg:
+                short = "Connection refused"
+            elif "timed out" in msg.lower():
+                short = "Connection timed out"
+            else:
+                short = "Connection failed"
+
+            # Log alleen als status verandert
+            if self.connected is not False:
+                Domoticz.Error(f"{short} (Connection failed to Tablet)")
+            self.connected = False
             return None
 
     # ---------------------------
@@ -200,24 +219,26 @@ class BasePlugin:
             self.api_call("setConfig", {"key":"motionDetectionEnabled","value":value})
             self.log(f"Motion sensor command sent: {value}")
         elif Unit == UNIT_LOADURL:
-            start_url = self.api_call("getDeviceInfo", {"type":"json"}).get("startUrl", "")
+            start_url = self.api_call("getDeviceInfo", {"type":"json"})
             if start_url:
-                self.api_call("loadUrl", {"url": start_url})
-                Domoticz.Log(f"Load Start URL command sent: {start_url}")
+                start_url = start_url.get("startUrl", "")
+                if start_url:
+                    self.api_call("loadUrl", {"url": start_url})
+                    Domoticz.Log(f"Load Start URL command sent: {start_url}")
         elif Unit == UNIT_BRIGHTNESS and Command == "Set Level":
             level = int(Level)
             self.api_call("setScreenBrightness", {"value": str(level)})
             if UNIT_BRIGHTNESS in Devices:
-                Devices[UNIT_BRIGHTNESS].Update(nValue=level, sValue=str(level))
+                Devices[UNIT_BRIGHTNESS].Update(nValue=2 if level > 0 else 0, sValue=str(level))
             self.log(f"Set brightness to: {level}")
 
     # ---------------------------
-    # Heartbeat (korte interval, full refresh via timer)
+    # Heartbeat
     # ---------------------------
     def onHeartbeat(self):
         now = time.time()
         if now - self.last_full_refresh < self.full_refresh_interval:
-            return  # nog niet tijd voor volledige refresh
+            return
         self.last_full_refresh = now
 
         try:
@@ -265,7 +286,8 @@ class BasePlugin:
                 self.log(f"Brightness: {brightness}")
 
         except Exception as e:
-            Domoticz.Log(f"Heartbeat error: {e}")
+            Domoticz.Error(f"Heartbeat error: {e}")
+
 
 # ---------------------------
 # Globale plugin instantie
@@ -277,7 +299,7 @@ def onStart():
     _plugin.onStart()
 
 def onStop():
-    Domoticz.Log("Fully Kiosk plugin stopped")
+    Domoticz.Log("Plugin stopped")
 
 def onHeartbeat():
     _plugin.onHeartbeat()
