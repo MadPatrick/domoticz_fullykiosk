@@ -1,9 +1,9 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.4" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.5" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <br/>
         <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.0.4</p>
+        <p>Version 1.0.5</p>
         <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness</p>
         <table border="1" cellpadding="4" cellspacing="0">
             <tr>
@@ -45,8 +45,8 @@
         <param field="Mode1" label="Refresh Interval (sec)" width="100px" required="true" default="60"/>
         <param field="Mode6" label="Debug logging" width="100px" default="No">
             <options>
-                <option label="No" value="False"/>
-                <option label="Yes" value="True"/>
+                <option label="Off" value="False" default="true"/>
+                <option label="On" value="True" />
             </options>
         </param>
     </params>
@@ -92,7 +92,7 @@ class BasePlugin:
     # Plugin start
     # ---------------------------
     def onStart(self):
-        Domoticz.Log("Fully Kiosk plugin started")
+        Domoticz.Log(f"Starting Plugin version {Parameters['Version']}")
 
         # Icon setup
         _IMAGE = "Fully"
