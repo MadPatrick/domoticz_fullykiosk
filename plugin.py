@@ -1,9 +1,9 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.5" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.6" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <br/>
         <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.0.5</p>
+        <p>Version 1.0.6</p>
         <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness</p>
         <table border="1" cellpadding="4" cellspacing="0">
             <tr>
@@ -105,6 +105,7 @@ class BasePlugin:
             else:
                 self.log(f"Icons found in database (ImageID={self.imageID}).")
         else:
+            self.imageID = 0
             Domoticz.Log(f"Unable to load icon pack '{_IMAGE}.zip'")
 
         # Parameters
@@ -155,8 +156,6 @@ class BasePlugin:
 
             if created_devices:
                 Domoticz.Log(f"Devices created: {', '.join(created_devices)}")
-#            else:
-#                Domoticz.Log("All devices already exist.")
 
     # ---------------------------
     # API Call
@@ -210,14 +209,20 @@ class BasePlugin:
             cmd = "screenOn" if Command == "On" else "screenOff"
             self.api_call(cmd)
             self.log(f"Screen command sent: {cmd}")
+            if UNIT_SCREEN in Devices:
+                Devices[UNIT_SCREEN].Update(nValue=1 if Command == "On" else 0, sValue=Command)
         elif Unit == UNIT_SCREENSAVER:
-            value = "true" if Command == "On" else "false"
-            self.api_call("setConfig", {"key":"screensaver","value":value})
-            self.log(f"Screensaver command sent: {value}")
+            cmd = "startScreensaver" if Command == "On" else "stopScreensaver"
+            self.api_call(cmd)
+            self.log(f"Screensaver command sent: {cmd}")
+            if UNIT_SCREENSAVER in Devices:
+                Devices[UNIT_SCREENSAVER].Update(nValue=1 if Command == "On" else 0, sValue=Command)
         elif Unit == UNIT_MOTION:
-            value = "true" if Command == "On" else "false"
-            self.api_call("setConfig", {"key":"motionDetectionEnabled","value":value})
-            self.log(f"Motion sensor command sent: {value}")
+            enabled = Command == "On"
+            self.api_call("setConfig", {"key":"motionDetectionEnabled","value":"true" if enabled else "false"})
+            self.log(f"Motion sensor command sent: {enabled}")
+            if UNIT_MOTION in Devices:
+                Devices[UNIT_MOTION].Update(nValue=1 if enabled else 0, sValue=Command)
         elif Unit == UNIT_LOADURL:
             start_url = self.api_call("getDeviceInfo", {"type":"json"})
             if start_url:
@@ -274,7 +279,7 @@ class BasePlugin:
 
             # Motion
             if UNIT_MOTION in Devices:
-                motion_on = info.get("motionDetectorStarted", False)
+                motion_on = info.get("motionDetectionEnabled", False)
                 Devices[UNIT_MOTION].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
                 self.log(f"Motion: {motion_on}")
 
