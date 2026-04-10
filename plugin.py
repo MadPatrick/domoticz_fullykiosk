@@ -43,7 +43,7 @@
         <param field="Username" label="Username" width="150px"/>
         <param field="Password" label="Password" width="150px" password="true"/>
         <param field="Mode1" label="Refresh Interval (sec)" width="100px" required="true" default="60"/>
-        <param field="Mode6" label="Debug logging" width="100px" default="No">
+        <param field="Mode6" label="Debug logging" width="100px" default="False">
             <options>
                 <option label="Off" value="False" default="true"/>
                 <option label="On" value="True" />
