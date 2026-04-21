@@ -79,7 +79,11 @@ class BasePlugin:
         self.heartbeat_interval = 10
         self.last_full_refresh = 0
         self.full_refresh_interval = 300
-        self.connected = None  # None = onbekend, True = verbonden, False = fout
+        self.connected = None  # None = unknown, True = connected, False = error
+        self.connection_error_delay = 60
+        self.first_failure_time = None
+        self.connection_error_logged = False
+        self.last_error_type = None
 
     # ---------------------------
     # Logging
@@ -172,10 +176,13 @@ class BasePlugin:
             r = requests.get(url, params=params, timeout=5)
             r.raise_for_status()
 
-            # Verbinding is gelukt
-            if self.connected is False:
+            # Connection succeeded
+            if self.connection_error_logged:
                 Domoticz.Log("Connection restored")
             self.connected = True
+            self.first_failure_time = None
+            self.connection_error_logged = False
+            self.last_error_type = None
 
             try:
                 data = r.json()
@@ -195,9 +202,18 @@ class BasePlugin:
             else:
                 short = "Connection failed"
 
-            # Log alleen als status verandert
-            if self.connected is not False:
-                Domoticz.Error(f"{short} (Connection failed to Tablet)")
+            now = time.time()
+            if self.first_failure_time is None:
+                self.first_failure_time = now
+                self.log(f"{short} (waiting {self.connection_error_delay}s before error)")
+
+            # Log only after 60 seconds of continuous failures
+            if now - self.first_failure_time >= self.connection_error_delay:
+                # Log again if error type changes while connection is still failing
+                if (not self.connection_error_logged) or (self.last_error_type != short):
+                    Domoticz.Error(f"{short} (Connection failed to Tablet)")
+                self.connection_error_logged = True
+                self.last_error_type = short
             self.connected = False
             return None
 
