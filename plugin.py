@@ -80,6 +80,9 @@ class BasePlugin:
         self.last_full_refresh = 0
         self.full_refresh_interval = 300
         self.connected = None  # None = onbekend, True = verbonden, False = fout
+        self.connection_error_delay = 60
+        self.first_failure_time = None
+        self.last_error_short = None
 
     # ---------------------------
     # Logging
@@ -176,6 +179,8 @@ class BasePlugin:
             if self.connected is False:
                 Domoticz.Log("Connection restored")
             self.connected = True
+            self.first_failure_time = None
+            self.last_error_short = None
 
             try:
                 data = r.json()
@@ -195,10 +200,19 @@ class BasePlugin:
             else:
                 short = "Connection failed"
 
-            # Log alleen als status verandert
-            if self.connected is not False:
-                Domoticz.Error(f"{short} (Connection failed to Tablet)")
-            self.connected = False
+            now = time.time()
+            if self.first_failure_time is None:
+                self.first_failure_time = now
+
+            # Log pas na 60 seconden onafgebroken fouten
+            if now - self.first_failure_time >= self.connection_error_delay:
+                if self.connected is not False or self.last_error_short != short:
+                    Domoticz.Error(f"{short} (Connection failed to Tablet)")
+                self.connected = False
+                self.last_error_short = short
+            else:
+                self.connected = None
+                self.log(f"{short} (waiting {int(self.connection_error_delay)}s before error)")
             return None
 
     # ---------------------------
