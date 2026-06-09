@@ -295,7 +295,7 @@ class BasePlugin:
 
             # Motion
             if UNIT_MOTION in Devices:
-                motion_on = info.get("motionDetectionEnabled", False)
+                motion_on = info.get("motionDetectorStarted", False)
                 Devices[UNIT_MOTION].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
                 self.log(f"Motion: {motion_on}")
 
