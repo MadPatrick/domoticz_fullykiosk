@@ -276,7 +276,7 @@ class BasePlugin:
 
             # Screensaver
             if UNIT_SCREENSAVER in Devices:
-                screensaver_on = info.get("screensaverEnabled", False)
+                screensaver_on = info.get("isInScreensaver", False)
                 Devices[UNIT_SCREENSAVER].Update(nValue=1 if screensaver_on else 0, sValue="On" if screensaver_on else "Off")
                 self.log(f"Screensaver: {screensaver_on}")
 
@@ -295,7 +295,7 @@ class BasePlugin:
 
             # Motion
             if UNIT_MOTION in Devices:
-                motion_on = info.get("motionDetectorStarted", False)
+                motion_on = info.get("motionDetectionEnabled", info.get("motionDetectorStarted", False))
                 Devices[UNIT_MOTION].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
                 self.log(f"Motion: {motion_on}")
 
