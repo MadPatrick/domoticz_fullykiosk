@@ -1,10 +1,10 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.8" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.10" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <br/>
         <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.0.8</p>
-        <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness</p>
+        <p>Version 1.0.10</p>
+        <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness, charge control</p>
         <table border="1" cellpadding="4" cellspacing="0">
             <tr>
                 <th>Parameter</th>
@@ -31,6 +31,10 @@
                 <td>Time for the next refresh</td>
             </tr>
             <tr>
+                <td>Charger switch ID</td>
+                <td>Domoticz device ID of the Z-Wave switch that controls tablet charging. Leave empty to disable charge control.</td>
+            </tr>
+            <tr>
                 <td>Debug Log</td>
                 <td>Do you want Debug logging On or Off</td>
             </tr>
@@ -43,6 +47,7 @@
         <param field="Username" label="Username" width="150px"/>
         <param field="Password" label="Password" width="150px" password="true"/>
         <param field="Mode1" label="Refresh Interval (sec)" width="100px" required="true" default="60"/>
+        <param field="Mode2" label="Charger switch ID" width="100px" required="false" default=""/>
         <param field="Mode6" label="Debug logging" width="100px" default="False">
             <options>
                 <option label="Off" value="False" default="true"/>
@@ -54,6 +59,8 @@
 """
 
 import Domoticz
+import datetime
+import random
 import requests
 import time
 
@@ -67,6 +74,12 @@ UNIT_CHARGING = 4
 UNIT_MOTION = 5
 UNIT_LOADURL = 6
 UNIT_BRIGHTNESS = 7
+
+DOMOTICZ_HOST = "127.0.0.1"
+DOMOTICZ_PORT = "8080"
+HARD_MIN_BATTERY = 15
+HARD_MAX_BATTERY = 95
+CHARGE_BACKUP_DELAY_SECONDS = 12 * 60 * 60
 
 class BasePlugin:
     def __init__(self):
@@ -84,6 +97,13 @@ class BasePlugin:
         self.first_failure_time = None
         self.connection_error_logged = False
         self.last_error_type = None
+        self.charger_device_idx = 0
+        self.charger_state = None
+        self.last_charger_off_time = None
+        self.charge_stop_target = random.randint(80, 90)
+        self.charge_start_target = random.randint(25, 30)
+        self.previous_charge_status = ""
+        self.charger_api_error_logged = False
 
     # ---------------------------
     # Logging
@@ -118,6 +138,10 @@ class BasePlugin:
         self.username = Parameters.get("Username", "")
         self.password = Parameters.get("Password", "")
         self.debug = Parameters.get("Mode6", "false").lower() == "true"
+        try:
+            self.charger_device_idx = int(Parameters.get("Mode2", "0") or 0)
+        except Exception:
+            self.charger_device_idx = 0
 
         # Refresh interval
         try:
@@ -126,9 +150,17 @@ class BasePlugin:
             self.full_refresh_interval = 300
         Domoticz.Log(f"Polling interval set to {self.full_refresh_interval} seconds")
 
+        if self.charger_device_idx > 0:
+            Domoticz.Log(
+                f"Charge control enabled for switch ID {self.charger_device_idx} "
+                f"(start {self.charge_start_target}%, stop {self.charge_stop_target}%)"
+            )
+        else:
+            Domoticz.Log("Charge control disabled: configure Charger switch ID in Mode2")
+
         # Korte heartbeat
         Domoticz.Heartbeat(self.heartbeat_interval)
-        Domoticz.Log(f"Heartbeat interval set to {self.heartbeat_interval} seconds")
+        self.log_startup_battery()
 
         # Devices aanmaken
         if not self.devices_created:
@@ -217,6 +249,250 @@ class BasePlugin:
             self.connected = False
             return None
 
+    def log_startup_battery(self):
+        info = self.api_call("getDeviceInfo", {"type":"json"})
+        if not info:
+            return
+
+        try:
+            battery_level = int(info.get("batteryLevel", 0))
+            battery_level = max(0, min(100, battery_level))
+            Domoticz.Log(f"Current battery level: {battery_level}%")
+        except Exception:
+            Domoticz.Error(f"Invalid battery level received from Fully Kiosk at startup: {info.get('batteryLevel')}")
+
+    # ---------------------------
+    # Domoticz charger switch
+    # ---------------------------
+    def domoticz_api_call(self, params):
+        url = f"http://{DOMOTICZ_HOST}:{DOMOTICZ_PORT}/json.htm"
+        try:
+            self.log(f"Domoticz API call: {url} params={params}")
+            r = requests.get(url, params=params, timeout=5)
+            r.raise_for_status()
+            data = r.json()
+            self.charger_api_error_logged = False
+            return data
+        except Exception as e:
+            if not self.charger_api_error_logged:
+                Domoticz.Error(f"Domoticz API error for charger switch ID {self.charger_device_idx}: {e}")
+            self.charger_api_error_logged = True
+            return None
+
+    def get_charger_device_info(self):
+        if self.charger_device_idx <= 0:
+            return None
+
+        data = self.domoticz_api_call({
+            "type": "devices",
+            "rid": str(self.charger_device_idx)
+        })
+        if not data:
+            return None
+
+        result = data.get("result") or []
+        if not result:
+            self.log(f"No Domoticz device found for charger switch ID {self.charger_device_idx}")
+            return None
+        return result[0]
+
+    def parse_domoticz_datetime(self, value):
+        if not value:
+            return None
+
+        value = str(value).strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y %H:%M"):
+            try:
+                return datetime.datetime.strptime(value, fmt)
+            except Exception:
+                pass
+        return None
+
+    def charger_state_from_info(self, info):
+        if not info:
+            return None
+
+        state = str(info.get("Status") or info.get("Data") or "").strip().lower()
+        if state == "on":
+            return "On"
+        if state == "off":
+            return "Off"
+
+        nvalue = str(info.get("nValue", "")).strip()
+        if nvalue == "1":
+            return "On"
+        if nvalue == "0":
+            return "Off"
+
+        return None
+
+    def read_charger_switch(self):
+        info = self.get_charger_device_info()
+        state = self.charger_state_from_info(info)
+
+        if state:
+            self.charger_state = state
+            if state == "Off":
+                last_update = self.parse_domoticz_datetime(info.get("LastUpdate")) if info else None
+                if last_update:
+                    self.last_charger_off_time = last_update.timestamp()
+                elif self.last_charger_off_time is None:
+                    self.last_charger_off_time = time.time()
+            else:
+                self.last_charger_off_time = None
+
+        return state, info
+
+    def charger_off_age_seconds(self, info):
+        if info:
+            last_update = self.parse_domoticz_datetime(info.get("LastUpdate"))
+            if last_update:
+                return max(0, (datetime.datetime.now() - last_update).total_seconds())
+
+        if self.last_charger_off_time is not None:
+            return max(0, time.time() - self.last_charger_off_time)
+
+        return None
+
+    def set_charger_switch(self, command, reason):
+        if self.charger_device_idx <= 0:
+            return False
+
+        data = self.domoticz_api_call({
+            "type": "command",
+            "param": "switchlight",
+            "idx": str(self.charger_device_idx),
+            "switchcmd": command
+        })
+        if not data:
+            return False
+
+        status = str(data.get("status", "OK")).upper()
+        if status != "OK":
+            Domoticz.Error(f"Unable to switch charger switch ID {self.charger_device_idx} to {command}: {data}")
+            return False
+
+        self.charger_state = command
+        if command == "Off":
+            self.last_charger_off_time = time.time()
+        else:
+            self.last_charger_off_time = None
+
+        Domoticz.Log(f"{reason}: charger switch ID {self.charger_device_idx} -> {command}")
+        return True
+
+    def start_charging(self, battery_level, reason):
+        if not self.set_charger_switch("On", reason):
+            return False
+
+        self.charge_stop_target = random.randint(80, 90)
+        self.charge_start_target = random.randint(20, 30)
+        Domoticz.Log(
+            f"Nieuw laadbereik: stopt bij {self.charge_stop_target}%, "
+            f"nieuwe start bij {self.charge_start_target}%"
+        )
+        return True
+
+    def stop_charging(self, battery_level, reason):
+        next_start_target = random.randint(25, 30)
+        if not self.set_charger_switch("Off", "Laden gestopt"):
+            return False
+
+        self.charge_start_target = next_start_target
+        Domoticz.Log(
+            f"Accu {battery_level}% | Laden gestopt: {reason} | "
+            f"Volgende start bij {self.charge_start_target}%"
+        )
+        self.previous_charge_status = "Ontladen"
+        return True
+
+    def log_charge_status(self, battery_level, charger_state):
+        current_status = "Opladen" if charger_state == "On" else "Ontladen"
+        if current_status == "Opladen":
+            status_string = (
+                f"Accu: {battery_level}% | {current_status} "
+                f"[{self.charge_start_target}% -> {self.charge_stop_target}%]"
+            )
+        else:
+            status_string = (
+                f"Accu: {battery_level}% | {current_status} "
+                f"[{self.charge_stop_target}% -> {self.charge_start_target}%]"
+            )
+
+        if current_status != self.previous_charge_status:
+            Domoticz.Log(status_string)
+            self.previous_charge_status = current_status
+
+    def handle_charge_control(self, battery_level):
+        if self.charger_device_idx <= 0:
+            return
+
+        charger_state, _ = self.read_charger_switch()
+        if charger_state is None:
+            charger_state = self.charger_state
+
+        if charger_state not in ("On", "Off"):
+            self.log("Charge control skipped: charger switch state is unknown")
+            return
+
+        if battery_level <= HARD_MIN_BATTERY and charger_state == "Off":
+            if self.start_charging(
+                battery_level,
+                f"Accu <= {HARD_MIN_BATTERY}% hard limit, forceer starten met laden"
+            ):
+                charger_state = "On"
+
+        if battery_level >= HARD_MAX_BATTERY and charger_state == "On":
+            if self.stop_charging(battery_level, f"hard limit {HARD_MAX_BATTERY}% bereikt"):
+                return
+
+        if battery_level <= self.charge_start_target and charger_state == "Off":
+            Domoticz.Log(f"Accu <= {self.charge_start_target}% -> Start laden")
+            if self.start_charging(battery_level, "Start laden"):
+                charger_state = "On"
+
+        if charger_state == "On":
+            stop_reason = None
+            if battery_level >= 100:
+                stop_reason = "volledig opgeladen (100%)"
+            elif battery_level >= self.charge_stop_target:
+                stop_reason = f"stopdoel {self.charge_stop_target}% bereikt"
+
+            if stop_reason and self.stop_charging(battery_level, stop_reason):
+                return
+
+        self.log_charge_status(battery_level, charger_state)
+
+    def handle_charger_backup(self):
+        if self.charger_device_idx <= 0:
+            return
+
+        charger_state, info = self.read_charger_switch()
+        if charger_state == "On":
+            self.log("Tablet unreachable; charger switch is already On")
+            return
+
+        if charger_state != "Off":
+            self.log("Tablet unreachable; charger backup skipped because switch state is unknown")
+            return
+
+        off_age = self.charger_off_age_seconds(info)
+        if off_age is None:
+            self.log("Tablet unreachable; charger backup skipped because off age is unknown")
+            return
+
+        if off_age >= CHARGE_BACKUP_DELAY_SECONDS:
+            Domoticz.Log(
+                f"Tablet unreachable and charger switch ID {self.charger_device_idx} "
+                f"has been Off for {off_age / 3600:.1f} hours; backup switches it On"
+            )
+            self.set_charger_switch("On", "Backup laden")
+        else:
+            self.log(
+                f"Tablet unreachable; charger switch ID {self.charger_device_idx} "
+                f"has been Off for {off_age / 3600:.1f} hours"
+            )
+
     # ---------------------------
     # Commands
     # ---------------------------
@@ -266,7 +542,15 @@ class BasePlugin:
             info = self.api_call("getDeviceInfo", {"type":"json"})
             if not info:
                 self.log("No data from Fully Kiosk received.")
+                self.handle_charger_backup()
                 return
+
+            try:
+                battery_level = int(info.get("batteryLevel", 0))
+                battery_level = max(0, min(100, battery_level))
+            except Exception:
+                battery_level = None
+                Domoticz.Error(f"Invalid battery level received from Fully Kiosk: {info.get('batteryLevel')}")
 
             # Screen
             if UNIT_SCREEN in Devices:
@@ -281,9 +565,7 @@ class BasePlugin:
                 self.log(f"Screensaver: {screensaver_on}")
 
             # Battery
-            if UNIT_BATTERY in Devices:
-                battery_level = int(info.get("batteryLevel", 0))
-                battery_level = max(0, min(100, battery_level))
+            if UNIT_BATTERY in Devices and battery_level is not None:
                 Devices[UNIT_BATTERY].Update(nValue=battery_level, sValue=str(battery_level))
                 self.log(f"Battery: {battery_level}%")
 
@@ -305,6 +587,9 @@ class BasePlugin:
                 brightness = max(0, min(100, brightness))
                 Devices[UNIT_BRIGHTNESS].Update(nValue=2 if brightness > 0 else 0, sValue=str(brightness))
                 self.log(f"Brightness: {brightness}")
+
+            if battery_level is not None:
+                self.handle_charge_control(battery_level)
 
         except Exception as e:
             Domoticz.Error(f"Heartbeat error: {e}")

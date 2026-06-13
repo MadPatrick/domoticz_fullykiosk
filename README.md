@@ -13,6 +13,7 @@ The plugin currently supports the following
 - Screensaver On/Off
 - Battery level
 - Charging status
+- Charge control via an external Domoticz switch
 - Motion Sensor On/Off
 - Brightness level
 
@@ -30,6 +31,9 @@ The plugin currently supports the following
 In the Domoticz UI, navigate to the Hardware page. 
 In the hardware dropdown list there will be an entry called "Fully Kiosk".
 Add the hardware to your Domoticz system and fill in the required fields
+
+Set **Charger switch ID** to the Domoticz device ID of the Z-Wave switch that switches the tablet charger. Leave it empty to disable charge control.
+The plugin starts charging around 20-30%, stops around 80-90%, always starts at 15% or lower, always stops at 95% or higher, and switches the charger on as backup when the tablet is unreachable and the charger has been off for 12 hours.
 
 ## 🔄 Update the plugin:
 When there an update of the plugin you can easlily do an update by:
