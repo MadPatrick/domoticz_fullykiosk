@@ -35,6 +35,14 @@
                 <td>Domoticz device ID of the Z-Wave switch that controls tablet charging. Leave empty to disable charge control.</td>
             </tr>
             <tr>
+                <td>Domoticz Host</td>
+                <td>Host name or IP address of the Domoticz used for charge control</td>
+            </tr>
+            <tr>
+                <td>Domoticz  Port</td>
+                <td>Port number of the Domoticz used for charge control</td>
+            </tr>
+            <tr>
                 <td>Debug Log</td>
                 <td>Do you want Debug logging On or Off</td>
             </tr>
@@ -48,6 +56,8 @@
         <param field="Password" label="Password" width="150px" password="true"/>
         <param field="Mode1" label="Refresh Interval (sec)" width="100px" required="true" default="60"/>
         <param field="Mode2" label="Charger switch ID" width="100px" required="false" default=""/>
+        <param field="Mode3" label="Domoticz Host" width="150px" required="false" default="127.0.0.1"/>
+        <param field="Mode4" label="Domoticz Port" width="100px" required="false" default="8080"/>
         <param field="Mode6" label="Debug logging" width="100px" default="False">
             <options>
                 <option label="Off" value="False" default="true"/>
@@ -75,8 +85,6 @@ UNIT_MOTION = 5
 UNIT_LOADURL = 6
 UNIT_BRIGHTNESS = 7
 
-DOMOTICZ_HOST = "127.0.0.1"
-DOMOTICZ_PORT = "8080"
 HARD_MIN_BATTERY = 15
 HARD_MAX_BATTERY = 95
 CHARGE_BACKUP_DELAY_SECONDS = 12 * 60 * 60
@@ -97,6 +105,8 @@ class BasePlugin:
         self.first_failure_time = None
         self.connection_error_logged = False
         self.last_error_type = None
+        self.domoticz_api_host = "127.0.0.1"
+        self.domoticz_api_port = "8080"
         self.charger_device_idx = 0
         self.charger_state = None
         self.last_charger_off_time = None
@@ -138,6 +148,8 @@ class BasePlugin:
         self.username = Parameters.get("Username", "")
         self.password = Parameters.get("Password", "")
         self.debug = Parameters.get("Mode6", "false").lower() == "true"
+        self.domoticz_api_host = (Parameters.get("Mode3", "127.0.0.1") or "127.0.0.1").strip()
+        self.domoticz_api_port = (Parameters.get("Mode4", "8080") or "8080").strip()
         try:
             self.charger_device_idx = int(Parameters.get("Mode2", "0") or 0)
         except Exception:
@@ -153,7 +165,8 @@ class BasePlugin:
         if self.charger_device_idx > 0:
             Domoticz.Log(
                 f"Charge control enabled for switch ID {self.charger_device_idx} "
-                f"(start {self.charge_start_target}%, stop {self.charge_stop_target}%)"
+                f"(start {self.charge_start_target}%, stop {self.charge_stop_target}%, "
+                f"Domoticz API {self.domoticz_api_host}:{self.domoticz_api_port})"
             )
         else:
             Domoticz.Log("Charge control disabled: configure Charger switch ID in Mode2")
@@ -265,7 +278,7 @@ class BasePlugin:
     # Domoticz charger switch
     # ---------------------------
     def domoticz_api_call(self, params):
-        url = f"http://{DOMOTICZ_HOST}:{DOMOTICZ_PORT}/json.htm"
+        url = f"http://{self.domoticz_api_host}:{self.domoticz_api_port}/json.htm"
         try:
             self.log(f"Domoticz API call: {url} params={params}")
             r = requests.get(url, params=params, timeout=5)
@@ -273,6 +286,16 @@ class BasePlugin:
             data = r.json()
             self.charger_api_error_logged = False
             return data
+        except requests.exceptions.HTTPError as e:
+            response = getattr(e, "response", None)
+            status_code = response.status_code if response is not None else "unknown"
+            if not self.charger_api_error_logged:
+                Domoticz.Error(
+                    f"Domoticz API error for charger switch ID {self.charger_device_idx}: "
+                    f"HTTP {status_code} at {url}. Check Domoticz API Host/Port and API access."
+                )
+            self.charger_api_error_logged = True
+            return None
         except Exception as e:
             if not self.charger_api_error_logged:
                 Domoticz.Error(f"Domoticz API error for charger switch ID {self.charger_device_idx}: {e}")
@@ -284,7 +307,8 @@ class BasePlugin:
             return None
 
         data = self.domoticz_api_call({
-            "type": "devices",
+            "type": "command",
+            "param": "getdevices",
             "rid": str(self.charger_device_idx)
         })
         if not data:
