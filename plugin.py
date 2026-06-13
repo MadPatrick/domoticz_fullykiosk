@@ -3,7 +3,7 @@
     <description>
         <br/>
         <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.0.10</p>
+        <p>Version 1.1.0</p>
         <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness, charge control</p>
         <table border="1" cellpadding="4" cellspacing="0">
             <tr>
