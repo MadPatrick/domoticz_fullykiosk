@@ -34,7 +34,7 @@ Add the hardware to your Domoticz system and fill in the required fields
 
 Set **Charger switch ID** to the Domoticz device ID of the Z-Wave switch that switches the tablet charger. Leave it empty to disable charge control.
 Set **Domoticz API Host** and **Domoticz API Port** to the local Domoticz web/API endpoint used to switch that device.
-The plugin starts charging around 20-30%, stops around 80-90%, always starts at 15% or lower, always stops at 95% or higher, and switches the charger on as backup when the tablet is unreachable and the charger has been off for 12 hours.
+The plugin starts charging around 20-30%, stops around 80-90%, always starts at 15% or lower, always stops at 95% or higher, and switches the charger on as backup when the tablet is unreachable and the charger has been off for 16 hours.
 
 ## 🔄 Update the plugin:
 When there an update of the plugin you can easlily do an update by:

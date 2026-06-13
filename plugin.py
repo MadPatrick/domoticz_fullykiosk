@@ -32,7 +32,7 @@
             </tr>
             <tr>
                 <td>Charger switch ID</td>
-                <td>Domoticz device ID of the Z-Wave switch that controls tablet charging. Leave empty to disable charge control.</td>
+                <td>Domoticz device ID of the Z-Wave switch that controls tablet charging. Leave empty to disable charge control. Backup switches the charger on after 16 hours off when the tablet is unreachable.</td>
             </tr>
             <tr>
                 <td>Domoticz Host</td>
@@ -87,7 +87,7 @@ UNIT_BRIGHTNESS = 7
 
 HARD_MIN_BATTERY = 15
 HARD_MAX_BATTERY = 95
-CHARGE_BACKUP_DELAY_SECONDS = 12 * 60 * 60
+CHARGE_BACKUP_DELAY_SECONDS = 16 * 60 * 60
 
 class BasePlugin:
     def __init__(self):
