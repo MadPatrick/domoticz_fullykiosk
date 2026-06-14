@@ -1,5 +1,5 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.0.10" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.0" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <br/>
         <h2>Fully Kiosk plugin</h2>
@@ -171,11 +171,11 @@ class BasePlugin:
         else:
             Domoticz.Log("Charge control disabled: configure Charger switch ID in Mode2")
 
-        # Korte heartbeat
+        # Short heartbeat
         Domoticz.Heartbeat(self.heartbeat_interval)
         self.log_startup_battery()
 
-        # Devices aanmaken
+        # Create devices
         if not self.devices_created:
             created_devices = []
 
@@ -378,7 +378,7 @@ class BasePlugin:
 
         return None
 
-    def set_charger_switch(self, command, reason):
+    def set_charger_switch(self, command, reason=None, log_action=True):
         if self.charger_device_idx <= 0:
             return False
 
@@ -393,7 +393,7 @@ class BasePlugin:
 
         status = str(data.get("status", "OK")).upper()
         if status != "OK":
-            Domoticz.Error(f"Unable to switch charger switch ID {self.charger_device_idx} to {command}: {data}")
+            Domoticz.Error(f"Unable to switch charger ID {self.charger_device_idx} to {command}: {data}")
             return False
 
         self.charger_state = command
@@ -402,45 +402,49 @@ class BasePlugin:
         else:
             self.last_charger_off_time = None
 
-        Domoticz.Log(f"{reason}: charger switch ID {self.charger_device_idx} -> {command}")
+        if log_action and reason:
+            Domoticz.Log(f"{reason}: Switch ID {self.charger_device_idx} -> {command}")
         return True
 
     def start_charging(self, battery_level, reason):
-        if not self.set_charger_switch("On", reason):
+        if not self.set_charger_switch("On", log_action=False):
             return False
 
         self.charge_stop_target = random.randint(80, 90)
         self.charge_start_target = random.randint(20, 30)
         Domoticz.Log(
-            f"Nieuw laadbereik: stopt bij {self.charge_stop_target}%, "
-            f"nieuwe start bij {self.charge_start_target}%"
+            f"Charging started at {battery_level}% ({reason}); "
+            f"charger switch ID {self.charger_device_idx} -> On; "
+            f"stop target {self.charge_stop_target}%."
         )
+        self.previous_charge_status = "Charging"
         return True
 
     def stop_charging(self, battery_level, reason):
         next_start_target = random.randint(25, 30)
-        if not self.set_charger_switch("Off", "Laden gestopt"):
+        if not self.set_charger_switch("Off", log_action=False):
             return False
 
         self.charge_start_target = next_start_target
         Domoticz.Log(
-            f"Accu {battery_level}% | Laden gestopt: {reason} | "
-            f"Volgende start bij {self.charge_start_target}%"
+            f"Charging stopped at {battery_level}% ({reason}); "
+            f"charger switch ID {self.charger_device_idx} -> Off; "
+            f"next start at {self.charge_start_target}%."
         )
-        self.previous_charge_status = "Ontladen"
+        self.previous_charge_status = "Discharging"
         return True
 
     def log_charge_status(self, battery_level, charger_state):
-        current_status = "Opladen" if charger_state == "On" else "Ontladen"
-        if current_status == "Opladen":
+        current_status = "Charging" if charger_state == "On" else "Discharging"
+        if current_status == "Charging":
             status_string = (
-                f"Accu: {battery_level}% | {current_status} "
-                f"[{self.charge_start_target}% -> {self.charge_stop_target}%]"
+                f"Battery {battery_level}%; charging "
+                f"(stop target {self.charge_stop_target}%)"
             )
         else:
             status_string = (
-                f"Accu: {battery_level}% | {current_status} "
-                f"[{self.charge_stop_target}% -> {self.charge_start_target}%]"
+                f"Battery {battery_level}%; discharging "
+                f"(starts charging at {self.charge_start_target}%)"
             )
 
         if current_status != self.previous_charge_status:
@@ -462,25 +466,24 @@ class BasePlugin:
         if battery_level <= HARD_MIN_BATTERY and charger_state == "Off":
             if self.start_charging(
                 battery_level,
-                f"Accu <= {HARD_MIN_BATTERY}% hard limit, forceer starten met laden"
+                f"hard minimum {HARD_MIN_BATTERY}% reached"
             ):
                 charger_state = "On"
 
         if battery_level >= HARD_MAX_BATTERY and charger_state == "On":
-            if self.stop_charging(battery_level, f"hard limit {HARD_MAX_BATTERY}% bereikt"):
+            if self.stop_charging(battery_level, f"hard maximum {HARD_MAX_BATTERY}% reached"):
                 return
 
         if battery_level <= self.charge_start_target and charger_state == "Off":
-            Domoticz.Log(f"Accu <= {self.charge_start_target}% -> Start laden")
-            if self.start_charging(battery_level, "Start laden"):
+            if self.start_charging(battery_level, f"start threshold {self.charge_start_target}% reached"):
                 charger_state = "On"
 
         if charger_state == "On":
             stop_reason = None
             if battery_level >= 100:
-                stop_reason = "volledig opgeladen (100%)"
+                stop_reason = "fully charged (100%)"
             elif battery_level >= self.charge_stop_target:
-                stop_reason = f"stopdoel {self.charge_stop_target}% bereikt"
+                stop_reason = f"stop target {self.charge_stop_target}% reached"
 
             if stop_reason and self.stop_charging(battery_level, stop_reason):
                 return
@@ -510,7 +513,7 @@ class BasePlugin:
                 f"Tablet unreachable and charger switch ID {self.charger_device_idx} "
                 f"has been Off for {off_age / 3600:.1f} hours; backup switches it On"
             )
-            self.set_charger_switch("On", "Backup laden")
+            self.set_charger_switch("On", "Backup charging")
         else:
             self.log(
                 f"Tablet unreachable; charger switch ID {self.charger_device_idx} "
