@@ -110,6 +110,23 @@ class BasePlugin:
         if self.debug:
             Domoticz.Log(f"DEBUG: {message}")
 
+    def _read_int_parameter(self, field, default, minimum=None, maximum=None):
+        raw = Parameters.get(field, "")
+        if raw is None or str(raw).strip() == "":
+            return default
+        try:
+            value = int(raw)
+            if minimum is not None and value < minimum:
+                raise ValueError
+            if maximum is not None and value > maximum:
+                raise ValueError
+            return value
+        except (TypeError, ValueError):
+            Domoticz.Error(
+                f"Invalid {field} value '{raw}'. Using default {default}."
+            )
+            return default
+
     # ---------------------------
     # Plugin start
     # ---------------------------
@@ -120,22 +137,18 @@ class BasePlugin:
 
         # Parameters
         self.base_url = Parameters["Address"]
-        self.port = int(Parameters.get("Port", 2323))
+        self.port = self._read_int_parameter("Port", 2323, 1, 65535)
         self.username = Parameters.get("Username", "")
         self.password = Parameters.get("Password", "")
         self.debug = Parameters.get("Mode6", "false").lower() == "true"
         self.domoticz_api_host = (Parameters.get("Mode3", "127.0.0.1") or "127.0.0.1").strip()
-        self.domoticz_api_port = (Parameters.get("Mode4", "8080") or "8080").strip()
-        try:
-            self.charger_device_idx = int(Parameters.get("Mode2", "0") or 0)
-        except Exception:
-            self.charger_device_idx = 0
+        self.domoticz_api_port = str(
+            self._read_int_parameter("Mode4", 8080, 1, 65535)
+        )
+        self.charger_device_idx = self._read_int_parameter("Mode2", 0, 0)
 
         # Refresh interval
-        try:
-            self.full_refresh_interval = max(1, int(Parameters.get("Mode1", 300)))
-        except Exception:
-            self.full_refresh_interval = 300
+        self.full_refresh_interval = self._read_int_parameter("Mode1", 60, 1)
         Domoticz.Log(f"Polling interval set to {self.full_refresh_interval} seconds")
 
         if self.charger_device_idx > 0:
