@@ -1,53 +1,18 @@
 """
 <plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.0" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
-        <br/>
-        <h2>Fully Kiosk plugin</h2>
-        <p>Version 1.1.0</p>
-        <p>Supports: Screen On/Off, Screensaver, Battery, Charging, Motion, Brightness, charge control</p>
-        <table border="1" cellpadding="4" cellspacing="0">
-            <tr>
-                <th>Parameter</th>
-                <th>Description</th>
-            </tr>
-            <tr>
-                <td>Address</td>
-                <td>Fill in the IP address</td>
-            </tr>
-            <tr>
-                <td>Port</td>
-                <td>Fill in the port address</td>
-            </tr>
-            <tr>
-                <td>Username</td>
-                <td>Fill in the Username (normally blank)</td>
-            </tr>
-            <tr>
-                <td>Password</td>
-                <td>Fill in the Password software</td>
-            </tr>
-            <tr>
-                <td>Refresh Interval (sec)</td>
-                <td>Time for the next refresh</td>
-            </tr>
-            <tr>
-                <td>Charger switch ID</td>
-                <td>Domoticz device ID of the Z-Wave switch that controls tablet charging. Leave empty to disable charge control. Backup switches the charger on after 16 hours off when the tablet is unreachable.</td>
-            </tr>
-            <tr>
-                <td>Domoticz Host</td>
-                <td>Host name or IP address of the Domoticz used for charge control</td>
-            </tr>
-            <tr>
-                <td>Domoticz  Port</td>
-                <td>Port number of the Domoticz used for charge control</td>
-            </tr>
-            <tr>
-                <td>Debug Log</td>
-                <td>Do you want Debug logging On or Off</td>
-            </tr>
-        </table>
-        <br/>
+        <h2>Fully Kiosk Browser</h2>
+        <p><strong>Version:</strong> 1.1.0</p>
+        <p>Controls and monitors a tablet running Fully Kiosk Browser through its Remote Admin API.</p>
+        <h3>Features</h3>
+        <ul>
+            <li>Screen, screensaver, motion sensor and brightness controls.</li>
+            <li>Battery level and charging status.</li>
+            <li>Loads the configured start URL from Domoticz.</li>
+            <li>Optional charger control through an external Domoticz switch, including battery thresholds and a safety backup.</li>
+        </ul>
+        <h3>Configuration</h3>
+        <p>Enter the tablet connection details. Leave the charger switch ID empty to disable charge control.</p>
     </description>
     <params>
         <param field="Address" label="Tablet IP" width="200px" required="true" default="192.168.1.200"/>
