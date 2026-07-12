@@ -114,6 +114,29 @@ class BasePlugin:
         self.charge_start_target = random.randint(25, 30)
         self.previous_charge_status = ""
         self.charger_api_error_logged = False
+        self.imageID = 0
+
+    def _load_device_icon(self):
+        _IMAGE = "Fully"
+        creating_new_icon = _IMAGE not in Images
+        try:
+            Domoticz.Image(f"{_IMAGE}.zip").Create()
+        except Exception as e:
+            Domoticz.Error(f"Unable to load icon pack '{_IMAGE}.zip': {e}")
+            return
+        if _IMAGE in Images:
+            self.imageID = Images[_IMAGE].ID
+            Domoticz.Log("Icons created and loaded." if creating_new_icon else
+                         f"Icons found in database (ImageID={self.imageID}).")
+        else:
+            Domoticz.Error(f"Unable to load icon pack '{_IMAGE}.zip'")
+
+    def _apply_device_icon(self):
+        if not self.imageID:
+            return
+        for device in Devices.values():
+            if device.Image != self.imageID:
+                device.Update(nValue=device.nValue, sValue=device.sValue, Image=self.imageID)
 
     # ---------------------------
     # Logging
@@ -128,19 +151,7 @@ class BasePlugin:
     def onStart(self):
         Domoticz.Log(f"Starting Plugin version {Parameters['Version']}")
 
-        # Icon setup
-        _IMAGE = "Fully"
-        creating_new_icon = _IMAGE not in Images
-        Domoticz.Image(f"{_IMAGE}.zip").Create()
-        if _IMAGE in Images:
-            self.imageID = Images[_IMAGE].ID
-            if creating_new_icon:
-                self.log("Icons created and loaded.")
-            else:
-                self.log(f"Icons found in database (ImageID={self.imageID}).")
-        else:
-            self.imageID = 0
-            Domoticz.Log(f"Unable to load icon pack '{_IMAGE}.zip'")
+        self._load_device_icon()
 
         # Parameters
         self.base_url = Parameters["Address"]
@@ -202,6 +213,7 @@ class BasePlugin:
                 created_devices.append("Brightness")
 
             self.devices_created = True
+            self._apply_device_icon()
 
             if created_devices:
                 Domoticz.Log(f"Devices created: {', '.join(created_devices)}")
