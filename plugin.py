@@ -1,8 +1,8 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.0" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.1" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <h2>Fully Kiosk Browser</h2>
-        <p><strong>Version:</strong> 1.1.0</p>
+        <p><strong>Version:</strong> 1.1.1</p>
         <p>Controls and monitors a tablet running Fully Kiosk Browser through its Remote Admin API.</p>
         <h3>Features</h3>
         <ul>
@@ -194,7 +194,13 @@ class BasePlugin:
             params.update(extra_params)
         url = f"http://{self.base_url}:{self.port}"
         try:
-            self.log(f"API call: {url} params={params}")
+            # ---> HIER IS HET WACHTWOORD GEMASKEERD <---
+            safe_params = dict(params)
+            if "password" in safe_params and safe_params["password"]:
+                safe_params["password"] = "********"
+            self.log(f"API call: {url} params={safe_params}")
+            # -------------------------------------------
+
             r = requests.get(url, params=params, timeout=5)
             r.raise_for_status()
 
