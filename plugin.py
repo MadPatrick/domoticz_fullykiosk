@@ -1,8 +1,8 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.1" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.2" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <h2>Fully Kiosk Browser</h2>
-        <p><strong>Version:</strong> 1.1.1</p>
+        <p><strong>Version:</strong> 1.1.2</p>
         <p>Controls and monitors a tablet running Fully Kiosk Browser through its Remote Admin API.</p>
         <h3>Features</h3>
         <ul>
@@ -83,16 +83,29 @@ class BasePlugin:
 
     def _load_device_icon(self):
         _IMAGE = "Fully"
-        creating_new_icon = _IMAGE not in Images
+        existing_image = next(
+            (image for name, image in Images.items()
+             if str(name).casefold() == _IMAGE.casefold()),
+            None,
+        )
+        if existing_image is not None:
+            self.imageID = existing_image.ID
+            Domoticz.Log(f"Icons found in database (ImageID={self.imageID}).")
+            return
+
         try:
             Domoticz.Image(f"{_IMAGE}.zip").Create()
         except Exception as e:
             Domoticz.Error(f"Unable to load icon pack '{_IMAGE}.zip': {e}")
             return
-        if _IMAGE in Images:
-            self.imageID = Images[_IMAGE].ID
-            Domoticz.Log("Icons created and loaded." if creating_new_icon else
-                         f"Icons found in database (ImageID={self.imageID}).")
+        created_image = next(
+            (image for name, image in Images.items()
+             if str(name).casefold() == _IMAGE.casefold()),
+            None,
+        )
+        if created_image is not None:
+            self.imageID = created_image.ID
+            Domoticz.Log("Icons created and loaded.")
         else:
             Domoticz.Error(f"Unable to load icon pack '{_IMAGE}.zip'")
 
