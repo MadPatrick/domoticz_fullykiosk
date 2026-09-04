@@ -1,8 +1,8 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.2" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.3" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <h2>Fully Kiosk Browser</h2>
-        <p><strong>Version:</strong> 1.1.2</p>
+        <p><strong>Version:</strong> 1.1.3</p>
         <p>Controls and monitors a tablet running Fully Kiosk Browser through its Remote Admin API.</p>
         <h3>Features</h3>
         <ul>
@@ -420,7 +420,7 @@ class BasePlugin:
             return False
 
         self.charge_stop_target = random.randint(80, 90)
-        self.charge_start_target = random.randint(20, 30)
+        self.charge_start_target = random.randint(25, 30)
         Domoticz.Log(
             f"Charging started at {battery_level}% ({reason}); "
             f"charger switch ID {self.charger_device_idx} -> On; "
@@ -533,37 +533,52 @@ class BasePlugin:
     # Commands
     # ---------------------------
     def onCommand(self, Unit, Command, Level, Color):
-        if Unit == UNIT_SCREEN:
-            cmd = "screenOn" if Command == "On" else "screenOff"
-            self.api_call(cmd)
-            self.log(f"Screen command sent: {cmd}")
-            if UNIT_SCREEN in Devices:
-                Devices[UNIT_SCREEN].Update(nValue=1 if Command == "On" else 0, sValue=Command)
-        elif Unit == UNIT_SCREENSAVER:
-            cmd = "startScreensaver" if Command == "On" else "stopScreensaver"
-            self.api_call(cmd)
-            self.log(f"Screensaver command sent: {cmd}")
-            if UNIT_SCREENSAVER in Devices:
-                Devices[UNIT_SCREENSAVER].Update(nValue=1 if Command == "On" else 0, sValue=Command)
-        elif Unit == UNIT_MOTION:
-            enabled = Command == "On"
-            self.api_call("setConfig", {"key":"motionDetectionEnabled","value":"true" if enabled else "false"})
-            self.log(f"Motion sensor command sent: {enabled}")
-            if UNIT_MOTION in Devices:
-                Devices[UNIT_MOTION].Update(nValue=1 if enabled else 0, sValue=Command)
-        elif Unit == UNIT_LOADURL:
-            start_url = self.api_call("getDeviceInfo", {"type":"json"})
-            if start_url:
-                start_url = start_url.get("startUrl", "")
+        try:
+            if Unit == UNIT_SCREEN:
+                cmd = "screenOn" if Command == "On" else "screenOff"
+                result = self.api_call(cmd)
+                self.log(f"Screen command sent: {cmd}")
+                if result is not None:
+                    if UNIT_SCREEN in Devices:
+                        Devices[UNIT_SCREEN].Update(nValue=1 if Command == "On" else 0, sValue=Command)
+                else:
+                    Domoticz.Error("Failed to set screen state on Fully Kiosk device")
+            elif Unit == UNIT_SCREENSAVER:
+                cmd = "startScreensaver" if Command == "On" else "stopScreensaver"
+                result = self.api_call(cmd)
+                self.log(f"Screensaver command sent: {cmd}")
+                if result is not None:
+                    if UNIT_SCREENSAVER in Devices:
+                        Devices[UNIT_SCREENSAVER].Update(nValue=1 if Command == "On" else 0, sValue=Command)
+                else:
+                    Domoticz.Error("Failed to set screensaver state on Fully Kiosk device")
+            elif Unit == UNIT_MOTION:
+                enabled = Command == "On"
+                result = self.api_call("setConfig", {"key":"motionDetectionEnabled","value":"true" if enabled else "false"})
+                self.log(f"Motion sensor command sent: {enabled}")
+                if result is not None:
+                    if UNIT_MOTION in Devices:
+                        Devices[UNIT_MOTION].Update(nValue=1 if enabled else 0, sValue=Command)
+                else:
+                    Domoticz.Error("Failed to set motion sensor state on Fully Kiosk device")
+            elif Unit == UNIT_LOADURL:
+                start_url = self.api_call("getDeviceInfo", {"type":"json"})
                 if start_url:
-                    self.api_call("loadUrl", {"url": start_url})
-                    Domoticz.Log(f"Load Start URL command sent: {start_url}")
-        elif Unit == UNIT_BRIGHTNESS and Command == "Set Level":
-            level = int(Level)
-            self.api_call("setScreenBrightness", {"value": str(level)})
-            if UNIT_BRIGHTNESS in Devices:
-                Devices[UNIT_BRIGHTNESS].Update(nValue=2 if level > 0 else 0, sValue=str(level))
-            self.log(f"Set brightness to: {level}")
+                    start_url = start_url.get("startUrl", "")
+                    if start_url:
+                        self.api_call("loadUrl", {"url": start_url})
+                        Domoticz.Log(f"Load Start URL command sent: {start_url}")
+            elif Unit == UNIT_BRIGHTNESS and Command == "Set Level":
+                level = int(Level)
+                result = self.api_call("setScreenBrightness", {"value": str(level)})
+                if result is not None:
+                    if UNIT_BRIGHTNESS in Devices:
+                        Devices[UNIT_BRIGHTNESS].Update(nValue=2 if level > 0 else 0, sValue=str(level))
+                else:
+                    Domoticz.Error("Failed to set brightness on Fully Kiosk device")
+                self.log(f"Set brightness to: {level}")
+        except Exception as e:
+            Domoticz.Error(f"Error handling command: {e}")
 
     # ---------------------------
     # Heartbeat
