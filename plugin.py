@@ -1,8 +1,8 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.4" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.5" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <h2>Fully Kiosk Browser</h2>
-        <p><strong>Version:</strong> 1.1.4</p>
+        <p><strong>Version:</strong> 1.1.5</p>
         <p>Controls and monitors a tablet running Fully Kiosk Browser through its Remote Admin API.</p>
         <h3>Features</h3>
         <ul>
@@ -23,6 +23,15 @@
         <param field="Mode2" label="Charger switch ID" width="100px" required="false" default=""/>
         <param field="Mode3" label="Domoticz Host" width="150px" required="false" default="127.0.0.1"/>
         <param field="Mode4" label="Domoticz Port" width="100px" required="false" default="8080"/>
+        <param field="Mode5" label="Use HTTPS" width="100px" default="False">
+            <description>
+                <br/>Connects to the tablet's own Remote Admin HTTPS listener (enable "Remote Administration via HTTPS" in Fully Kiosk). Uses the tablet's self-signed certificate, so certificate verification is skipped for this connection.
+            </description>
+            <options>
+                <option label="Off" value="False" default="true"/>
+                <option label="On" value="True"/>
+            </options>
+        </param>
         <param field="Mode6" label="Debug logging" width="100px" default="False">
             <options>
                 <option label="Off" value="False" default="true"/>
@@ -38,6 +47,25 @@ import datetime
 import random
 import requests
 import time
+import threading
+import queue
+import warnings
+from contextlib import contextmanager
+
+try:
+    from urllib3.exceptions import InsecureRequestWarning
+except ImportError:  # pragma: no cover - urllib3 always ships with requests
+    InsecureRequestWarning = Warning
+
+
+@contextmanager
+def _suppress_insecure_warning():
+    """Locally suppress the InsecureRequestWarning for a single request to the
+    tablet's own self-signed HTTPS listener (Mode5), instead of disabling the
+    warning process-wide for the whole interpreter."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=InsecureRequestWarning)
+        yield
 
 # ---------------------------
 # Unit constants
@@ -80,6 +108,23 @@ class BasePlugin:
         self.previous_charge_status = ""
         self.charger_api_error_logged = False
         self.imageID = 0
+
+        # Reuse TCP connections instead of opening a new one per request
+        self.http = requests.Session()
+
+        self.use_https = False
+        self.api_base_url = ""
+
+        # The heartbeat fetch (tablet status + charge control) runs on a
+        # background thread so a slow/unreachable tablet never blocks
+        # Domoticz's single callback thread. The worker only calls api_call()/
+        # domoticz_api_call()/handle_charge_control() (none of which touch
+        # Devices[...] - charge control talks to Domoticz's own HTTP API, not
+        # this plugin's Devices dict); Devices[...] updates happen in
+        # _processHeartbeatResult(), on the main thread, from onHeartbeat.
+        self._fetch_lock = threading.Lock()
+        self._fetch_in_progress = False
+        self._result_queue = queue.Queue()
 
     def _load_device_icon(self):
         _IMAGE = "Fully"
@@ -153,6 +198,9 @@ class BasePlugin:
         self.port = self._read_int_parameter("Port", 2323, 1, 65535)
         self.username = Parameters.get("Username", "")
         self.password = Parameters.get("Password", "")
+        self.use_https = Parameters.get("Mode5", "False").lower() == "true"
+        scheme = "https" if self.use_https else "http"
+        self.api_base_url = f"{scheme}://{self.base_url}:{self.port}"
         self.debug = Parameters.get("Mode6", "false").lower() == "true"
         self.domoticz_api_host = (Parameters.get("Mode3", "127.0.0.1") or "127.0.0.1").strip()
         self.domoticz_api_port = str(
@@ -218,7 +266,7 @@ class BasePlugin:
             params["username"] = self.username
         if extra_params:
             params.update(extra_params)
-        url = f"http://{self.base_url}:{self.port}"
+        url = self.api_base_url
         try:
             # ---> HIER IS HET WACHTWOORD GEMASKEERD <---
             safe_params = dict(params)
@@ -227,7 +275,12 @@ class BasePlugin:
             self.log(f"API call: {url} params={safe_params}")
             # -------------------------------------------
 
-            r = requests.get(url, params=params, timeout=5)
+            if self.use_https:
+                # Tablet's own self-signed HTTPS listener - no CA to verify against.
+                with _suppress_insecure_warning():
+                    r = self.http.get(url, params=params, timeout=5, verify=False)
+            else:
+                r = self.http.get(url, params=params, timeout=5)
             r.raise_for_status()
 
             # Connection succeeded
@@ -296,7 +349,7 @@ class BasePlugin:
         url = f"http://{self.domoticz_api_host}:{self.domoticz_api_port}/json.htm"
         try:
             self.log(f"Domoticz API call: {url} params={params}")
-            r = requests.get(url, params=params, timeout=5)
+            r = self.http.get(url, params=params, timeout=5)
             r.raise_for_status()
             data = r.json()
             self.charger_api_error_logged = False
@@ -590,66 +643,122 @@ class BasePlugin:
     # Heartbeat
     # ---------------------------
     def onHeartbeat(self):
+        # Process any fetch cycle(s) the background worker finished since the
+        # last tick - main/callback thread, safe here to touch Devices[...].
+        while True:
+            try:
+                bundle = self._result_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._processHeartbeatResult(bundle)
+
         now = time.time()
         if now - self.last_full_refresh < self.full_refresh_interval:
             return
         self.last_full_refresh = now
 
+        self._triggerHeartbeatFetch()
+
+    def _triggerHeartbeatFetch(self):
+        """Starts the background worker for one refresh cycle. Runs on the
+        main thread; only starts a thread and returns immediately."""
+        with self._fetch_lock:
+            if self._fetch_in_progress:
+                self.log("Fetch already in progress, skipping this heartbeat trigger.")
+                return
+            self._fetch_in_progress = True
+
+        threading.Thread(target=self._fetchHeartbeatWorker, daemon=True).start()
+
+    def _fetchHeartbeatWorker(self):
+        """Runs on a background thread. Does the Fully Kiosk query and (if
+        needed) the charge-control logic - handle_charge_control()/
+        handle_charger_backup() only talk to Domoticz's own HTTP API, never
+        to this plugin's Devices[...] dict, so they're safe to run here.
+        Devices[...] updates happen in _processHeartbeatResult(), on the main
+        thread, afterwards."""
+        bundle = {}
         try:
             info = self.api_call("getDeviceInfo", {"type":"json"})
+            bundle["info"] = info
             if not info:
-                self.log("No data from Fully Kiosk received.")
                 self.handle_charger_backup()
-                return
-
-            try:
-                battery_level = int(info.get("batteryLevel", 0))
-                battery_level = max(0, min(100, battery_level))
-            except Exception:
-                battery_level = None
-                Domoticz.Error(f"Invalid battery level received from Fully Kiosk: {info.get('batteryLevel')}")
-
-            # Screen
-            if UNIT_SCREEN in Devices:
-                screen_on = info.get("screenOn", False)
-                Devices[UNIT_SCREEN].Update(nValue=1 if screen_on else 0, sValue="On" if screen_on else "Off")
-                self.log(f"Screen: {screen_on}")
-
-            # Screensaver
-            if UNIT_SCREENSAVER in Devices:
-                screensaver_on = info.get("isInScreensaver", False)
-                Devices[UNIT_SCREENSAVER].Update(nValue=1 if screensaver_on else 0, sValue="On" if screensaver_on else "Off")
-                self.log(f"Screensaver: {screensaver_on}")
-
-            # Battery
-            if UNIT_BATTERY in Devices and battery_level is not None:
-                Devices[UNIT_BATTERY].Update(nValue=battery_level, sValue=str(battery_level))
-                self.log(f"Battery: {battery_level}%")
-
-            # Charging
-            if UNIT_CHARGING in Devices:
-                charging = info.get("isPlugged", False)
-                Devices[UNIT_CHARGING].Update(nValue=1 if charging else 0, sValue="On" if charging else "Off")
-                self.log(f"Charging: {charging}")
-
-            # Motion
-            if UNIT_MOTION in Devices:
-                motion_on = info.get("motionDetectionEnabled", info.get("motionDetectorStarted", False))
-                Devices[UNIT_MOTION].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
-                self.log(f"Motion: {motion_on}")
-
-            # Brightness
-            if UNIT_BRIGHTNESS in Devices:
-                brightness = int(info.get("screenBrightness", 0))
-                brightness = max(0, min(100, brightness))
-                Devices[UNIT_BRIGHTNESS].Update(nValue=2 if brightness > 0 else 0, sValue=str(brightness))
-                self.log(f"Brightness: {brightness}")
-
-            if battery_level is not None:
-                self.handle_charge_control(battery_level)
-
+            else:
+                try:
+                    battery_level = int(info.get("batteryLevel", 0))
+                    battery_level = max(0, min(100, battery_level))
+                except Exception:
+                    battery_level = None
+                    bundle["battery_error"] = info.get("batteryLevel")
+                bundle["battery_level"] = battery_level
+                if battery_level is not None:
+                    self.handle_charge_control(battery_level)
         except Exception as e:
-            Domoticz.Error(f"Heartbeat error: {e}")
+            bundle["error"] = str(e)
+        finally:
+            self._result_queue.put(bundle)
+            with self._fetch_lock:
+                self._fetch_in_progress = False
+
+    def _processHeartbeatResult(self, bundle):
+        """Devices[...]-touching part of one refresh cycle, given the raw data
+        already fetched by _fetchHeartbeatWorker(). Safe to call from the main
+        thread only."""
+        if "error" in bundle:
+            Domoticz.Error(f"Heartbeat error: {bundle['error']}")
+            return
+
+        info = bundle.get("info")
+        if not info:
+            self.log("No data from Fully Kiosk received.")
+            return
+
+        if "battery_error" in bundle:
+            Domoticz.Error(f"Invalid battery level received from Fully Kiosk: {bundle['battery_error']}")
+        battery_level = bundle.get("battery_level")
+
+        # Screen
+        if UNIT_SCREEN in Devices:
+            screen_on = info.get("screenOn", False)
+            Devices[UNIT_SCREEN].Update(nValue=1 if screen_on else 0, sValue="On" if screen_on else "Off")
+            self.log(f"Screen: {screen_on}")
+
+        # Screensaver
+        if UNIT_SCREENSAVER in Devices:
+            screensaver_on = info.get("isInScreensaver", False)
+            Devices[UNIT_SCREENSAVER].Update(nValue=1 if screensaver_on else 0, sValue="On" if screensaver_on else "Off")
+            self.log(f"Screensaver: {screensaver_on}")
+
+        # Battery
+        if UNIT_BATTERY in Devices and battery_level is not None:
+            Devices[UNIT_BATTERY].Update(nValue=battery_level, sValue=str(battery_level))
+            self.log(f"Battery: {battery_level}%")
+
+        # Charging
+        if UNIT_CHARGING in Devices:
+            charging = info.get("isPlugged", False)
+            Devices[UNIT_CHARGING].Update(nValue=1 if charging else 0, sValue="On" if charging else "Off")
+            self.log(f"Charging: {charging}")
+
+        # Motion
+        if UNIT_MOTION in Devices:
+            motion_on = info.get("motionDetectionEnabled", info.get("motionDetectorStarted", False))
+            Devices[UNIT_MOTION].Update(nValue=1 if motion_on else 0, sValue="On" if motion_on else "Off")
+            self.log(f"Motion: {motion_on}")
+
+        # Brightness
+        if UNIT_BRIGHTNESS in Devices:
+            brightness = int(info.get("screenBrightness", 0))
+            brightness = max(0, min(100, brightness))
+            Devices[UNIT_BRIGHTNESS].Update(nValue=2 if brightness > 0 else 0, sValue=str(brightness))
+            self.log(f"Brightness: {brightness}")
+
+    def onStop(self):
+        try:
+            self.http.close()
+        except Exception:
+            pass
+        Domoticz.Log("Plugin stopped")
 
 
 # ---------------------------
@@ -662,7 +771,7 @@ def onStart():
     _plugin.onStart()
 
 def onStop():
-    Domoticz.Log("Plugin stopped")
+    _plugin.onStop()
 
 def onHeartbeat():
     _plugin.onHeartbeat()
