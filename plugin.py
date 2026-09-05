@@ -1,8 +1,8 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.3" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.4" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <h2>Fully Kiosk Browser</h2>
-        <p><strong>Version:</strong> 1.1.3</p>
+        <p><strong>Version:</strong> 1.1.4</p>
         <p>Controls and monitors a tablet running Fully Kiosk Browser through its Remote Admin API.</p>
         <h3>Features</h3>
         <ul>
@@ -243,8 +243,14 @@ class BasePlugin:
                 self.log(f"API response: {data}")
                 return data
             except Exception:
+                # HTTP succeeded (2xx, checked above via raise_for_status()) but the
+                # body wasn't valid JSON. That's still a successful round-trip to the
+                # tablet - only a genuine connection/HTTP failure (handled in the
+                # except block below) should be treated as "the command failed".
+                # Returning None here would make callers that check
+                # `if api_call(...) is not None` wrongly report failure.
                 self.log(f"API returned non-JSON: {r.text}")
-                return None
+                return {"raw": r.text}
         except Exception as e:
             msg = str(e)
             if "No route to host" in msg:
