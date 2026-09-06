@@ -1,8 +1,8 @@
 """
-<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.1.5" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
+<plugin key="FullyKiosk" name="Fully Kiosk plugin" author="MadPatrick" version="1.2.0" wikilink="https://www.fully-kiosk.com/" externallink="https://github.com/MadPatrick/domoticz_fullykiosk">
     <description>
         <h2>Fully Kiosk Browser</h2>
-        <p><strong>Version:</strong> 1.1.5</p>
+        <p><strong>Version:</strong> 1.2.0</p>
         <p>Controls and monitors a tablet running Fully Kiosk Browser through its Remote Admin API.</p>
         <h3>Features</h3>
         <ul>
@@ -15,29 +15,30 @@
         <p>Enter the tablet connection details. Leave the charger switch ID empty to disable charge control.</p>
     </description>
     <params>
-        <param field="Address" label="Tablet IP" width="200px" required="true" default="192.168.1.200"/>
-        <param field="Port" label="Port" width="100px" required="true" default="2323"/>
-        <param field="Username" label="Username" width="150px"/>
-        <param field="Password" label="Password" width="150px" password="true"/>
-        <param field="Mode1" label="Refresh Interval (sec)" width="100px" required="true" default="60"/>
-        <param field="Mode2" label="Charger switch ID" width="100px" required="false" default=""/>
-        <param field="Mode3" label="Domoticz Host" width="150px" required="false" default="127.0.0.1"/>
-        <param field="Mode4" label="Domoticz Port" width="100px" required="false" default="8080"/>
-        <param field="Mode5" label="Use HTTPS" width="100px" default="False">
-            <description>
-                <br/>Connects to the tablet's own Remote Admin HTTPS listener (enable "Remote Administration via HTTPS" in Fully Kiosk). Uses the tablet's self-signed certificate, so certificate verification is skipped for this connection.
-            </description>
-            <options>
-                <option label="Off" value="False" default="true"/>
-                <option label="On" value="True"/>
-            </options>
-        </param>
-        <param field="Mode6" label="Debug logging" width="100px" default="False">
-            <options>
-                <option label="Off" value="False" default="true"/>
-                <option label="On" value="True" />
-            </options>
-        </param>
+        <group label="Tablet connection">
+            <param field="Address" label="Tablet IP" width="200px" required="true" default="192.168.1.200"/>
+            <param field="Port" label="Port" type="number" min="1" max="65535" step="1" width="100px" required="true" default="2323"/>
+            <param field="Username" label="Username" width="150px"/>
+            <param field="Password" label="Password" width="150px" password="true"/>
+            <param field="UseHTTPS" type="boolean" label="Use HTTPS" default="">
+                <description>
+                    <br/>Connects to the tablet's own Remote Admin HTTPS listener (enable "Remote Administration via HTTPS" in Fully Kiosk). Uses the tablet's self-signed certificate, so certificate verification is skipped for this connection.
+                </description>
+            </param>
+        </group>
+        <group label="Polling">
+            <param field="RefreshInterval" type="number" label="Refresh interval (sec)" min="1" max="86400" step="1" width="100px" default=""/>
+        </group>
+        <group label="Charge control">
+            <param field="ChargerSwitchID" type="number" label="Charger switch ID" min="0" step="1" width="100px" required="false" default="">
+                <description><br/>Leave empty or use 0 to disable charge control.</description>
+            </param>
+            <param field="DomoticzHost" label="Domoticz host" width="150px" required="false" default=""/>
+            <param field="DomoticzPort" type="number" label="Domoticz port" min="1" max="65535" step="1" width="100px" required="false" default=""/>
+        </group>
+        <group label="Logging">
+            <param field="EnableDebug" type="boolean" label="Debug logging" default=""/>
+        </group>
     </params>
 </plugin>
 """
@@ -61,7 +62,7 @@ except ImportError:  # pragma: no cover - urllib3 always ships with requests
 @contextmanager
 def _suppress_insecure_warning():
     """Locally suppress the InsecureRequestWarning for a single request to the
-    tablet's own self-signed HTTPS listener (Mode5), instead of disabling the
+    tablet's own self-signed HTTPS listener, instead of disabling the
     warning process-wide for the whole interpreter."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=InsecureRequestWarning)
@@ -185,6 +186,43 @@ class BasePlugin:
             )
             return default
 
+    def _read_migrated_parameter(self, field, legacy_field, default=""):
+        """Read a named setting, falling back to its former Mode field.
+
+        Empty defaults on the new settings make existing Domoticz hardware
+        configurations continue to work until they are saved with the new
+        field names.
+        """
+        raw = Parameters.get(field, "")
+        if raw is None or str(raw).strip() == "":
+            raw = Parameters.get(legacy_field, "")
+        if raw is None or str(raw).strip() == "":
+            return default
+        return raw
+
+    def _read_migrated_int_parameter(
+        self, field, legacy_field, default, minimum=None, maximum=None
+    ):
+        raw = self._read_migrated_parameter(field, legacy_field, default)
+        try:
+            value = int(raw)
+            if minimum is not None and value < minimum:
+                raise ValueError
+            if maximum is not None and value > maximum:
+                raise ValueError
+            return value
+        except (TypeError, ValueError):
+            Domoticz.Error(
+                f"Invalid {field} value '{raw}'. Using default {default}."
+            )
+            return default
+
+    def _read_migrated_boolean_parameter(self, field, legacy_field, default=False):
+        raw = self._read_migrated_parameter(
+            field, legacy_field, "true" if default else "false"
+        )
+        return str(raw).strip().lower() in ("true", "1", "yes", "on")
+
     # ---------------------------
     # Plugin start
     # ---------------------------
@@ -198,18 +236,32 @@ class BasePlugin:
         self.port = self._read_int_parameter("Port", 2323, 1, 65535)
         self.username = Parameters.get("Username", "")
         self.password = Parameters.get("Password", "")
-        self.use_https = Parameters.get("Mode5", "False").lower() == "true"
+        self.use_https = self._read_migrated_boolean_parameter(
+            "UseHTTPS", "Mode5"
+        )
         scheme = "https" if self.use_https else "http"
         self.api_base_url = f"{scheme}://{self.base_url}:{self.port}"
-        self.debug = Parameters.get("Mode6", "false").lower() == "true"
-        self.domoticz_api_host = (Parameters.get("Mode3", "127.0.0.1") or "127.0.0.1").strip()
-        self.domoticz_api_port = str(
-            self._read_int_parameter("Mode4", 8080, 1, 65535)
+        self.debug = self._read_migrated_boolean_parameter(
+            "EnableDebug", "Mode6"
         )
-        self.charger_device_idx = self._read_int_parameter("Mode2", 0, 0)
+        self.domoticz_api_host = str(
+            self._read_migrated_parameter(
+                "DomoticzHost", "Mode3", "127.0.0.1"
+            )
+        ).strip()
+        self.domoticz_api_port = str(
+            self._read_migrated_int_parameter(
+                "DomoticzPort", "Mode4", 8080, 1, 65535
+            )
+        )
+        self.charger_device_idx = self._read_migrated_int_parameter(
+            "ChargerSwitchID", "Mode2", 0, 0
+        )
 
         # Refresh interval
-        self.full_refresh_interval = self._read_int_parameter("Mode1", 60, 1)
+        self.full_refresh_interval = self._read_migrated_int_parameter(
+            "RefreshInterval", "Mode1", 60, 1, 86400
+        )
         Domoticz.Log(f"Polling interval set to {self.full_refresh_interval} seconds")
 
         if self.charger_device_idx > 0:
@@ -219,7 +271,7 @@ class BasePlugin:
                 f"Domoticz API {self.domoticz_api_host}:{self.domoticz_api_port})"
             )
         else:
-            Domoticz.Log("Charge control disabled: configure Charger switch ID in Mode2")
+            Domoticz.Log("Charge control disabled: configure Charger switch ID")
 
         # Short heartbeat
         Domoticz.Heartbeat(self.heartbeat_interval)
