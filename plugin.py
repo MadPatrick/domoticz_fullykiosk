@@ -135,7 +135,16 @@ class BasePlugin:
         self._result_queue = queue.Queue()
 
     def _load_device_icon(self):
-        _IMAGE = "Fully"
+        # The zip file on disk keeps its historical short name, but the icon's
+        # Base (in icons.txt, used as the Images dict key) must start with
+        # this plugin's key ("FullyKiosk") - Domoticz only loads a plugin's
+        # pre-existing custom icons into Images at startup when
+        # Base LIKE '<PluginKey>%'. A Base that doesn't satisfy that (the
+        # short "Fully" used before) means Images never contains it on
+        # restart, so it gets silently recreated (and re-logged as "created")
+        # every single time instead of being found.
+        _ZIP_FILE = "Fully"
+        _IMAGE = "FullyKiosk"
         existing_image = next(
             (image for name, image in Images.items()
              if str(name).casefold() == _IMAGE.casefold()),
@@ -147,9 +156,9 @@ class BasePlugin:
             return
 
         try:
-            Domoticz.Image(f"{_IMAGE}.zip").Create()
+            Domoticz.Image(f"{_ZIP_FILE}.zip").Create()
         except Exception as e:
-            Domoticz.Error(f"Unable to load icon pack '{_IMAGE}.zip': {e}")
+            Domoticz.Error(f"Unable to load icon pack '{_ZIP_FILE}.zip': {e}")
             return
         created_image = next(
             (image for name, image in Images.items()
@@ -160,7 +169,7 @@ class BasePlugin:
             self.imageID = created_image.ID
             Domoticz.Log("Icons created and loaded.")
         else:
-            Domoticz.Error(f"Unable to load icon pack '{_IMAGE}.zip'")
+            Domoticz.Error(f"Unable to load icon pack '{_ZIP_FILE}.zip'")
 
     def _apply_device_icon(self):
         if not self.imageID:
