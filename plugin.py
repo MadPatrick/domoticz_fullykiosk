@@ -15,30 +15,37 @@
         <p>Enter the tablet connection details. Leave the charger switch ID empty to disable charge control.</p>
     </description>
     <params>
-        <group label="Tablet connection">
-            <param field="Address" label="Tablet IP" width="200px" required="true" default="192.168.1.200"/>
-            <param field="Port" label="Port" type="number" min="1" max="65535" step="1" width="100px" required="true" default="2323"/>
-            <param field="Username" label="Username" width="150px"/>
-            <param field="Password" label="Password" width="150px" password="true"/>
-            <param field="UseHTTPS" type="boolean" label="Use HTTPS" default="">
-                <description>
-                    <br/>Connects to the tablet's own Remote Admin HTTPS listener (enable "Remote Administration via HTTPS" in Fully Kiosk). Uses the tablet's self-signed certificate, so certificate verification is skipped for this connection.
-                </description>
-            </param>
-        </group>
-        <group label="Polling">
-            <param field="RefreshInterval" type="number" label="Refresh interval (sec)" min="1" max="86400" step="1" width="100px" default=""/>
-        </group>
-        <group label="Charge control">
-            <param field="ChargerSwitchID" type="number" label="Charger switch ID" min="0" step="1" width="100px" required="false" default="">
-                <description><br/>Leave empty or use 0 to disable charge control.</description>
-            </param>
-            <param field="DomoticzHost" label="Domoticz host" width="150px" required="false" default=""/>
-            <param field="DomoticzPort" type="number" label="Domoticz port" min="1" max="65535" step="1" width="100px" required="false" default=""/>
-        </group>
-        <group label="Logging">
-            <param field="EnableDebug" type="boolean" label="Debug logging" default=""/>
-        </group>
+        <param field="Address" label="Tablet IP" width="200px" required="true" default="192.168.1.200">
+            <description>
+                <h4 style="margin:4px 0 6px 0;">Tablet connection</h4>
+            </description>
+        </param>
+        <param field="Port" label="Port" type="number" min="1" max="65535" step="1" width="100px" required="true" default="2323"/>
+        <param field="Username" label="Username" width="150px"/>
+        <param field="Password" label="Password" width="150px" password="true"/>
+        <param field="UseHTTPS" type="boolean" label="Use HTTPS" default="">
+            <description>
+                <br/>Connects to the tablet's own Remote Admin HTTPS listener (enable "Remote Administration via HTTPS" in Fully Kiosk). Uses the tablet's self-signed certificate, so certificate verification is skipped for this connection.
+            </description>
+        </param>
+        <param field="RefreshInterval" type="number" label="Refresh interval (sec)" min="1" max="86400" step="1" width="100px" default="">
+            <description>
+                <h4 style="margin:14px 0 6px 0; border-top:1px solid #ccc; padding-top:8px;">Polling</h4>
+            </description>
+        </param>
+        <param field="ChargerSwitchID" type="number" label="Charger switch ID" min="0" step="1" width="100px" required="false" default="">
+            <description>
+                <h4 style="margin:14px 0 6px 0; border-top:1px solid #ccc; padding-top:8px;">Charge control</h4>
+                <br/>Leave empty or use 0 to disable charge control.
+            </description>
+        </param>
+        <param field="DomoticzHost" label="Domoticz host" width="150px" required="false" default=""/>
+        <param field="DomoticzPort" type="number" label="Domoticz port" min="1" max="65535" step="1" width="100px" required="false" default=""/>
+        <param field="EnableDebug" type="boolean" label="Debug logging" default="">
+            <description>
+                <h4 style="margin:14px 0 6px 0; border-top:1px solid #ccc; padding-top:8px;">Logging</h4>
+            </description>
+        </param>
     </params>
 </plugin>
 """
@@ -128,7 +135,16 @@ class BasePlugin:
         self._result_queue = queue.Queue()
 
     def _load_device_icon(self):
-        _IMAGE = "Fully"
+        # The zip file on disk keeps its historical short name, but the icon's
+        # Base (in icons.txt, used as the Images dict key) must start with
+        # this plugin's key ("FullyKiosk") - Domoticz only loads a plugin's
+        # pre-existing custom icons into Images at startup when
+        # Base LIKE '<PluginKey>%'. A Base that doesn't satisfy that (the
+        # short "Fully" used before) means Images never contains it on
+        # restart, so it gets silently recreated (and re-logged as "created")
+        # every single time instead of being found.
+        _ZIP_FILE = "Fully"
+        _IMAGE = "FullyKiosk"
         existing_image = next(
             (image for name, image in Images.items()
              if str(name).casefold() == _IMAGE.casefold()),
@@ -140,9 +156,9 @@ class BasePlugin:
             return
 
         try:
-            Domoticz.Image(f"{_IMAGE}.zip").Create()
+            Domoticz.Image(f"{_ZIP_FILE}.zip").Create()
         except Exception as e:
-            Domoticz.Error(f"Unable to load icon pack '{_IMAGE}.zip': {e}")
+            Domoticz.Error(f"Unable to load icon pack '{_ZIP_FILE}.zip': {e}")
             return
         created_image = next(
             (image for name, image in Images.items()
@@ -153,7 +169,7 @@ class BasePlugin:
             self.imageID = created_image.ID
             Domoticz.Log("Icons created and loaded.")
         else:
-            Domoticz.Error(f"Unable to load icon pack '{_IMAGE}.zip'")
+            Domoticz.Error(f"Unable to load icon pack '{_ZIP_FILE}.zip'")
 
     def _apply_device_icon(self):
         if not self.imageID:
